@@ -14,6 +14,7 @@ defmodule Hexpm.TrustedPublishers.Provider do
   @callback name() :: String.t()
   @callback issuer() :: String.t()
   @callback resolve_immutable_ids(map()) :: {:ok, immutable_ids()} | {:error, term()}
+  @callback validate_claims(claims()) :: :ok | {:error, term()}
   @callback match?(TrustedPublisher.t(), claims()) :: boolean()
   @callback claims_snapshot(claims()) :: map()
 

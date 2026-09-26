@@ -242,6 +242,19 @@ defmodule Hexpm.TrustedPublishers.Provider.GitHubTest do
     end
   end
 
+  describe "validate_claims/1" do
+    test "rejects pull_request_target" do
+      assert GitHub.validate_claims(%{"event_name" => "pull_request_target"}) ==
+               {:error, :event_not_allowed}
+    end
+
+    test "accepts other events" do
+      assert GitHub.validate_claims(%{"event_name" => "push"}) == :ok
+      assert GitHub.validate_claims(%{"event_name" => "release"}) == :ok
+      assert GitHub.validate_claims(%{}) == :ok
+    end
+  end
+
   describe "resolve_immutable_ids/1" do
     test "resolves owner and repository ids from a single repository lookup" do
       expect(Hexpm.HTTP.Mock, :get, fn "https://api.github.com/repos/acme/widget",

@@ -377,6 +377,9 @@ defmodule HexpmWeb.API.OAuthController do
   defp jwt_bearer_error(:token_replayed), do: {:invalid_grant, "OIDC token has already been used"}
   defp jwt_bearer_error(:issuer_not_allowed), do: {:invalid_grant, "OIDC issuer is not allowed"}
 
+  defp jwt_bearer_error(:event_not_allowed),
+    do: {:invalid_grant, "OIDC tokens from pull_request_target workflows are not accepted"}
+
   defp jwt_bearer_error(reason)
        when reason in [
               :invalid_token,

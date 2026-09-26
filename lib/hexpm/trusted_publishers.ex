@@ -110,6 +110,7 @@ defmodule Hexpm.TrustedPublishers do
          {:ok, issuer} <- fetch_issuer(peeked),
          {:ok, provider} <- fetch_provider_by_issuer(issuer),
          {:ok, claims} <- OIDC.verify(oidc_token, issuer),
+         :ok <- provider.validate_claims(claims),
          {:ok, package} <- fetch_package(repository, package_name),
          {:ok, trusted_publisher} <- find_matching_publisher(package, provider, claims),
          {:ok, token} <- mint_token(trusted_publisher, package, claims, provider) do

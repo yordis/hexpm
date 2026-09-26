@@ -115,6 +115,21 @@ defmodule HexpmWeb.API.OAuthControllerTrustedPublisherTest do
     assert body["error"] == "unauthorized_client"
   end
 
+  test "rejects tokens from pull_request_target workflows", %{package: package, client: client} do
+    oidc =
+      TrustedPublisherHelpers.github_claims()
+      |> Map.put("event_name", "pull_request_target")
+      |> TrustedPublisherHelpers.sign_oidc_claims()
+
+    conn =
+      build_conn()
+      |> post("/api/oauth/token", mint_params(client, oidc, "package:hexpm/#{package.name}"))
+
+    body = json_response(conn, 400)
+    assert body["error"] == "invalid_grant"
+    assert body["error_description"] =~ "pull_request_target"
+  end
+
   test "rejects non-matching publisher", %{package: package, client: client} do
     oidc =
       TrustedPublisherHelpers.sign_oidc_claims(

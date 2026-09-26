@@ -23,6 +23,15 @@ defmodule Hexpm.TrustedPublishers.Provider.GitHub do
     end
   end
 
+  # pull_request_target runs with the base repository's permissions, so a
+  # workflow that checks out the pull request head would hand a fork's code an
+  # OIDC token.
+  @impl true
+  def validate_claims(%{"event_name" => "pull_request_target"}),
+    do: {:error, :event_not_allowed}
+
+  def validate_claims(claims) when is_map(claims), do: :ok
+
   # The GitHub namespace is case-insensitive, so owner and repository are
   # compared case-insensitively and pinned by their immutable ids. Workflow and
   # environment are matched exactly: git paths are case-sensitive, so
