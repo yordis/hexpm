@@ -19,6 +19,20 @@ defmodule Hexpm.TestHelpers do
   end
 
   @doc """
+  The key from the password reset mail sent to this process. Only its hash is
+  stored, so the mail is the one place a test can read it from.
+  """
+  def password_reset_key do
+    receive do
+      {:email, %Swoosh.Email{private: %{type: type}, assigns: %{key: key}}}
+      when type in ["password_reset_request", "security_password_reset"] ->
+        key
+    after
+      0 -> raise "no password reset mail was sent"
+    end
+  end
+
+  @doc """
   Captures logs down to debug, including Ecto's query log.
 
   `capture_log/2`'s `:level` option filters what it keeps; it does not lower
@@ -221,6 +235,20 @@ defmodule Hexpm.TestHelpers do
       |> Map.put_new("optional", false)
       |> Map.put_new("app", req["name"])
     end)
+  end
+
+  @doc """
+  Runs the waiting `Hexpm.Diff.CacheDeleteWorker` jobs in the test process,
+  where the in-memory store the test wrote to lives.
+  """
+  def run_diff_cache_jobs() do
+    import Ecto.Query, only: [from: 2]
+
+    from(j in Oban.Job,
+      where: j.worker == "Hexpm.Diff.CacheDeleteWorker" and j.state == "available"
+    )
+    |> Hexpm.Repo.all()
+    |> Enum.each(&(:ok = Hexpm.Diff.CacheDeleteWorker.perform(&1)))
   end
 
   def app_env(app, key, value) do
