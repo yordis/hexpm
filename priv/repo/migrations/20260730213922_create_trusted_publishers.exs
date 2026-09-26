@@ -16,9 +16,6 @@ defmodule Hexpm.Repo.Migrations.CreateTrustedPublishers do
       timestamps()
     end
 
-    create index(:trusted_publishers, [:package_id])
-    create index(:trusted_publishers, [:provider, :repository, :workflow])
-
     create unique_index(
              :trusted_publishers,
              [:package_id, :provider, :repository, :workflow, :environment],
