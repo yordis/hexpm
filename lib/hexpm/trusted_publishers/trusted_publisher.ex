@@ -122,9 +122,10 @@ defmodule Hexpm.TrustedPublishers.TrustedPublisher do
     )
   end
 
-  # Workflow and environment keep their casing because they are matched exactly
-  # against the OIDC claims. Owner and repository are downcased because the
-  # GitHub namespace is itself case-insensitive.
+  # The workflow keeps its casing because it is matched exactly against the OIDC
+  # claims. Owner and repository are downcased because the GitHub namespace is
+  # itself case-insensitive. The environment keeps the casing the owner typed
+  # and is compared case-insensitively.
   defp normalize_environment(nil), do: ""
   defp normalize_environment(value), do: String.trim(value)
 

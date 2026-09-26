@@ -18,7 +18,7 @@ defmodule Hexpm.Repo.Migrations.CreateTrustedPublishers do
 
     create unique_index(
              :trusted_publishers,
-             [:package_id, :provider, :repository, :workflow, :environment],
+             [:package_id, :provider, :repository, :workflow, "lower(environment)"],
              name: :trusted_publishers_package_config_unique
            )
   end

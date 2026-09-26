@@ -323,5 +323,40 @@ defmodule Hexpm.TrustedPublishersTest do
         assert publisher.repository == "acme/widget"
       end
     end
+
+    test "rejects an environment that differs only by casing", %{user: user} do
+      package =
+        insert(:package,
+          package_owners: [build(:package_owner, user: user, level: "full")]
+        )
+
+      expect(Hexpm.HTTP.Mock, :get, 2, fn
+        "https://api.github.com/repos/acme/widget", _, _ ->
+          {:ok, 200, [], %{"id" => 99, "owner" => %{"id" => 42}}}
+      end)
+
+      params = %{
+        "provider" => "github",
+        "repository_owner" => "acme",
+        "repository" => "widget",
+        "workflow" => "release.yml"
+      }
+
+      assert {:ok, _publisher} =
+               TrustedPublishers.create(
+                 package,
+                 Map.put(params, "environment", "Production"),
+                 audit: audit_data(user)
+               )
+
+      assert {:error, changeset} =
+               TrustedPublishers.create(
+                 package,
+                 Map.put(params, "environment", "production"),
+                 audit: audit_data(user)
+               )
+
+      assert errors_on(changeset)[:repository]
+    end
   end
 end

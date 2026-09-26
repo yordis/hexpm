@@ -185,7 +185,7 @@ defmodule Hexpm.TrustedPublishers.Provider.GitHubTest do
       refute GitHub.match?(publisher, claims)
     end
 
-    test "rejects environment differing only by casing" do
+    test "matches environment differing only by casing" do
       publisher = %TrustedPublisher{
         repository_owner_id: "123",
         repository_id: "456",
@@ -202,7 +202,7 @@ defmodule Hexpm.TrustedPublishers.Provider.GitHubTest do
         "environment" => "Production"
       }
 
-      refute GitHub.match?(publisher, claims)
+      assert GitHub.match?(publisher, claims)
     end
 
     test "rejects claims without a usable workflow ref" do

@@ -32,10 +32,11 @@ defmodule Hexpm.TrustedPublishers.Provider.GitHub do
 
   def validate_claims(claims) when is_map(claims), do: :ok
 
-  # The GitHub namespace is case-insensitive, so owner and repository are
-  # compared case-insensitively and pinned by their immutable ids. Workflow and
-  # environment are matched exactly: git paths are case-sensitive, so
-  # `Release.yml` must not satisfy a publisher configured for `release.yml`.
+  # The GitHub namespace and environment names are case-insensitive, so owner,
+  # repository, and environment are compared case-insensitively, with owner and
+  # repository pinned by their immutable ids. The workflow is matched exactly:
+  # git paths are case-sensitive, so `Release.yml` must not satisfy a publisher
+  # configured for `release.yml`.
   @impl true
   def match?(%TrustedPublisher{} = publisher, claims) when is_map(claims) do
     repository = downcase(claims["repository"])
@@ -90,7 +91,8 @@ defmodule Hexpm.TrustedPublishers.Provider.GitHub do
   defp environment_matches?(%{environment: env}, _token_environment) when env in [nil, ""],
     do: true
 
-  defp environment_matches?(%{environment: expected}, actual), do: expected == actual
+  defp environment_matches?(%{environment: expected}, actual),
+    do: downcase(expected) == downcase(actual)
 
   # Prefer workflow_ref (calling workflow, always in the trusted repo) over
   # job_workflow_ref (may point at a reusable workflow in another repository).
