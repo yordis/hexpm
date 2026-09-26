@@ -21,6 +21,7 @@ defmodule HexpmWeb.Components.PackageLayout do
   alias Hexpm.Docs.Files
   alias Hexpm.Repository.Owners
   alias Hexpm.Security.Advisories
+  alias Hexpm.TrustedPublishers
   alias HexpmWeb.ViewHelpers
 
   # All assigns below (except per-page ones) come from
@@ -598,7 +599,7 @@ defmodule HexpmWeb.Components.PackageLayout do
           label: "Activity",
           path: audit_logs_path(assigns.package)
         }
-      ] ++ owners_tab(assigns)
+      ] ++ owners_tab(assigns) ++ trusted_publishers_tab(assigns)
   end
 
   defp files_tab(%{current_release: nil}), do: []
@@ -630,6 +631,25 @@ defmodule HexpmWeb.Components.PackageLayout do
           icon: "user-group",
           label: "Owners",
           path: ViewHelpers.path_for_owners(assigns.package)
+        }
+      ]
+    else
+      []
+    end
+  end
+
+  defp trusted_publishers_tab(assigns) do
+    is_full_owner =
+      assigns.active_tab == :trusted_publishers or
+        Owners.full_owner?(assigns.owners, assigns.current_user)
+
+    if TrustedPublishers.enabled?() and is_full_owner do
+      [
+        %{
+          active: assigns.active_tab == :trusted_publishers,
+          icon: "key",
+          label: "Trusted publishers",
+          path: ViewHelpers.path_for_trusted_publishers(assigns.package)
         }
       ]
     else

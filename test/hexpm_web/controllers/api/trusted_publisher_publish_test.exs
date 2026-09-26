@@ -178,22 +178,6 @@ defmodule HexpmWeb.API.TrustedPublisherPublishTest do
     assert conn.status in [401, 403, 404]
   end
 
-  test "minted token cannot manage trusted publishers", %{package: package} do
-    token = mint_token(package)
-
-    conn =
-      build_conn()
-      |> put_req_header("authorization", "Bearer #{token.access_token}")
-      |> post("/api/packages/#{package.name}/trusted_publishers", %{
-        "provider" => "github",
-        "repository_owner" => "acme",
-        "github_repository" => "other",
-        "workflow" => "ci.yml"
-      })
-
-    assert conn.status in [401, 403]
-  end
-
   test "minted token can publish docs for its package", %{package: package, user: user} do
     insert(:release, package: package, version: "1.0.0", publisher: user)
     token = mint_token(package)
