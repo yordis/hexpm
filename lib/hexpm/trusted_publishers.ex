@@ -77,7 +77,9 @@ defmodule Hexpm.TrustedPublishers do
 
     case Repo.transaction(multi) do
       {:ok, %{trusted_publisher: trusted_publisher}} ->
-        {:ok, Repo.preload(trusted_publisher, package: :repository)}
+        trusted_publisher = Repo.preload(trusted_publisher, package: :repository)
+        notify_owners(&Emails.trusted_publisher_added/3, trusted_publisher, audit_data)
+        {:ok, trusted_publisher}
 
       {:error, _op, changeset, _} ->
         {:error, changeset}
@@ -93,8 +95,26 @@ defmodule Hexpm.TrustedPublishers do
       |> audit(audit_data, "trusted_publisher.remove", trusted_publisher)
 
     case Repo.transaction(multi) do
-      {:ok, %{trusted_publisher: deleted}} -> {:ok, deleted}
-      {:error, _op, changeset, _} -> {:error, changeset}
+      {:ok, %{trusted_publisher: deleted}} ->
+        notify_owners(&Emails.trusted_publisher_removed/3, trusted_publisher, audit_data)
+        {:ok, deleted}
+
+      {:error, _op, changeset, _} ->
+        {:error, changeset}
+    end
+  end
+
+  # Not an optional email: a publisher grants publish rights to whoever can run
+  # the workflow, so every owner hears about it.
+  defp notify_owners(email, %TrustedPublisher{package: package} = trusted_publisher, audit_data) do
+    owners =
+      package
+      |> Owners.all(user: [:emails, organization: [organization_users: [user: :emails]]])
+      |> Enum.map(& &1.user)
+
+    if owners != [] do
+      email.(trusted_publisher, owners, audit_data.user)
+      |> Mailer.deliver!()
     end
   end
 

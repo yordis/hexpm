@@ -1,6 +1,7 @@
 defmodule Hexpm.TrustedPublishersTest do
   use Hexpm.DataCase, async: false
   import Mox
+  import Swoosh.TestAssertions
 
   alias Hexpm.Accounts.AuditLog
   alias Hexpm.TrustedPublishers
@@ -295,6 +296,50 @@ defmodule Hexpm.TrustedPublishersTest do
       assert publisher.repository_id == "99"
     end
 
+    test "emails every package owner", %{user: user} do
+      other_owner = insert(:user)
+
+      package =
+        insert(:package,
+          package_owners: [
+            build(:package_owner, user: user, level: "full"),
+            build(:package_owner, user: other_owner, level: "maintainer")
+          ]
+        )
+
+      expect(Hexpm.HTTP.Mock, :get, fn "https://api.github.com/repos/acme/widget", _, _ ->
+        {:ok, 200, [], %{"id" => 99, "owner" => %{"id" => 42}}}
+      end)
+
+      assert {:ok, publisher} =
+               TrustedPublishers.create(
+                 package,
+                 %{
+                   "provider" => "github",
+                   "repository_owner" => "acme",
+                   "repository" => "widget",
+                   "workflow" => "release.yml",
+                   "environment" => "production"
+                 },
+                 audit: audit_data(user)
+               )
+
+      assert_email_sent(fn email ->
+        assert email.subject =~ "Trusted publisher added to package #{package.name}"
+        assert email.text_body =~ "#{user.username} added a trusted publisher"
+        assert email.text_body =~ "acme/widget"
+        assert email.text_body =~ "Environment: production"
+
+        assert Enum.sort(Enum.map(email.to, &elem(&1, 1))) ==
+                 Enum.sort([
+                   Hexpm.Accounts.User.email(user, :primary),
+                   Hexpm.Accounts.User.email(other_owner, :primary)
+                 ])
+      end)
+
+      assert publisher.package_id == package.id
+    end
+
     test "allows the same configuration on several packages", %{user: user} do
       params = %{
         "provider" => "github",
@@ -357,6 +402,20 @@ defmodule Hexpm.TrustedPublishersTest do
                )
 
       assert errors_on(changeset)[:repository]
+    end
+  end
+
+  describe "delete/2" do
+    test "emails every package owner", %{user: user, trusted_publisher: trusted_publisher} do
+      assert {:ok, _} = TrustedPublishers.delete(trusted_publisher, audit: audit_data(user))
+
+      assert_email_sent(fn email ->
+        assert email.subject =~ "Trusted publisher removed from package"
+        assert email.text_body =~ "#{user.username} removed a trusted publisher"
+        assert email.text_body =~ "Workflow: release.yml"
+        refute email.text_body =~ "Environment:"
+        assert email.to == [{user.username, Hexpm.Accounts.User.email(user, :primary)}]
+      end)
     end
   end
 end
