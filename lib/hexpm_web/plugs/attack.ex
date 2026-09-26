@@ -55,7 +55,7 @@ defmodule HexpmWeb.Plugs.Attack do
   end
 
   rule "ip throttle", conn do
-    if api?(conn) do
+    if api?(conn) and not trusted_publisher_mint?(conn) do
       ip_throttle(conn.remote_ip)
     end
   end
@@ -280,10 +280,18 @@ defmodule HexpmWeb.Plugs.Attack do
     timed_throttle(
       {:trusted_publisher_mint_ip, ip},
       time: time,
+      increment: Keyword.get(opts, :increment, 1),
       storage: @storage,
       limit: 30,
       period: 15 * 60_000
     )
+  end
+
+  def trusted_publisher_mint_ip_blocked?(ip) do
+    {_, {:throttle, data}} =
+      trusted_publisher_mint_ip_throttle(ip, time: System.system_time(:millisecond), increment: 0)
+
+    data[:remaining] == 0
   end
 
   def sso_start_organization_throttle(organization_id, ip, opts \\ []) do
@@ -405,6 +413,15 @@ defmodule HexpmWeb.Plugs.Attack do
 
   defp api?(%Plug.Conn{request_path: "/api/" <> _}), do: true
   defp api?(%Plug.Conn{}), do: false
+
+  # Failed mints have their own limit in HexpmWeb.API.OAuthController.
+  defp trusted_publisher_mint?(%Plug.Conn{
+         request_path: "/api/oauth/token",
+         params: %{"grant_type" => "urn:ietf:params:oauth:grant-type:jwt-bearer"}
+       }),
+       do: true
+
+  defp trusted_publisher_mint?(%Plug.Conn{}), do: false
 
   defp scim?(%Plug.Conn{request_path: "/scim/" <> _}), do: true
   defp scim?(%Plug.Conn{}), do: false

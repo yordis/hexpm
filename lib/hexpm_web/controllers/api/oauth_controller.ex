@@ -47,14 +47,15 @@ defmodule HexpmWeb.API.OAuthController do
 
   defp jwt_bearer_mint_rate_limit(conn, _opts) do
     if get_grant_type(conn.params) == @jwt_bearer_grant_type do
-      case Attack.trusted_publisher_mint_ip_throttle(conn.remote_ip) do
-        {:allow, _} ->
-          conn
-
-        {:block, _} ->
-          conn
-          |> render_oauth_error(:slow_down, "Too many mint requests. Please try again later.")
-          |> halt()
+      if Attack.trusted_publisher_mint_ip_blocked?(conn.remote_ip) do
+        conn
+        |> render_oauth_error(
+          :slow_down,
+          "Too many failed mint requests. Please try again later."
+        )
+        |> halt()
+      else
+        conn
       end
     else
       conn
@@ -318,14 +319,14 @@ defmodule HexpmWeb.API.OAuthController do
 
           {:error, reason} ->
             {error, description} = jwt_bearer_error(reason)
-            render_oauth_error(conn, error, description)
+            reject_jwt_bearer(conn, error, description)
         end
       else
         {:error, error, description} ->
-          render_oauth_error(conn, error, description)
+          reject_jwt_bearer(conn, error, description)
 
         {:error, error} ->
-          render_oauth_error(conn, :invalid_client, error)
+          reject_jwt_bearer(conn, :invalid_client, error)
       end
     else
       render_oauth_error(
@@ -334,6 +335,13 @@ defmodule HexpmWeb.API.OAuthController do
         "Unsupported grant type: #{@jwt_bearer_grant_type}"
       )
     end
+  end
+
+  # CI runners share egress addresses, so only failures count against the
+  # address. A server error is ours and the runner should be free to retry it.
+  defp reject_jwt_bearer(conn, error, description) do
+    if error != :server_error, do: Attack.trusted_publisher_mint_ip_throttle(conn.remote_ip)
+    render_oauth_error(conn, error, description)
   end
 
   defp parse_package_scope(scope_string) when is_binary(scope_string) do

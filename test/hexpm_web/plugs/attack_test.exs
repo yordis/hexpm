@@ -193,6 +193,20 @@ defmodule HexpmWeb.Plugs.AttackTest do
                })
     end
 
+    test "doesn't apply the ip limit to trusted publisher mints" do
+      conn =
+        conn(:post, "/api/oauth/token", %{
+          "grant_type" => "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        })
+        |> Map.put(:remote_ip, {3, 3, 3, 3})
+        |> assign(:current_user, nil)
+        |> assign(:current_organization, nil)
+        |> Hello.call(:index)
+
+      assert conn.status == 200
+      assert get_resp_header(conn, "x-ratelimit-remaining") == []
+    end
+
     test "allows requests again when limit expired" do
       conn = request_ip({2, 2, 2, 2})
       assert get_resp_header(conn, "x-ratelimit-remaining") == ["99"]

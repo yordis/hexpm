@@ -115,6 +115,33 @@ defmodule HexpmWeb.API.OAuthControllerTrustedPublisherTest do
     assert body["error"] == "unauthorized_client"
   end
 
+  describe "rate limit" do
+    setup do
+      PlugAttack.Storage.Ets.clean(HexpmWeb.Plugs.Attack.Storage)
+      on_exit(fn -> PlugAttack.Storage.Ets.clean(HexpmWeb.Plugs.Attack.Storage) end)
+    end
+
+    test "only counts failed mints", %{package: package, client: client} do
+      scope = "package:hexpm/#{package.name}"
+      ip = {127, 0, 0, 1}
+
+      for _ <- 1..29, do: HexpmWeb.Plugs.Attack.trusted_publisher_mint_ip_throttle(ip)
+
+      for _ <- 1..2 do
+        oidc = TrustedPublisherHelpers.sign_oidc_claims(TrustedPublisherHelpers.github_claims())
+        conn = post(build_conn(), "/api/oauth/token", mint_params(client, oidc, scope))
+        assert json_response(conn, 200)["access_token"]
+      end
+
+      conn = post(build_conn(), "/api/oauth/token", mint_params(client, "not-a-jwt", scope))
+      assert json_response(conn, 400)["error"] == "invalid_grant"
+
+      oidc = TrustedPublisherHelpers.sign_oidc_claims(TrustedPublisherHelpers.github_claims())
+      conn = post(build_conn(), "/api/oauth/token", mint_params(client, oidc, scope))
+      assert json_response(conn, 429)["error"] == "slow_down"
+    end
+  end
+
   test "rejects tokens from pull_request_target workflows", %{package: package, client: client} do
     oidc =
       TrustedPublisherHelpers.github_claims()

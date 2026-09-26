@@ -158,7 +158,7 @@ scope=package:hexpm/PACKAGE
 }
 ```
 
-Errors use OAuth-style bodies (`error`, `error_description`), for example missing fields (`invalid_request`), a malformed or missing `scope` (`invalid_scope`), bad or replayed OIDC tokens (`invalid_grant`), or no matching publisher (`access_denied`). The grant is public (the OIDC token is the credential) and rate-limited by IP.
+Errors use OAuth-style bodies (`error`, `error_description`), for example missing fields (`invalid_request`), a malformed or missing `scope` (`invalid_scope`), bad or replayed OIDC tokens (`invalid_grant`), or no matching publisher (`access_denied`). The grant is public (the OIDC token is the credential). It is exempt from the general API rate limit so CI runners sharing an address are not throttled, and only failed mints count toward a per-IP limit; once it is exceeded the endpoint answers `429` with `slow_down`.
 
 ### Security model
 
