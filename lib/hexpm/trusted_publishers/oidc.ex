@@ -91,14 +91,7 @@ defmodule Hexpm.TrustedPublishers.OIDC do
   end
 
   defp put_jwks_cache(issuer, jwks, expires_at) do
-    case :persistent_term.get({__MODULE__, :jwks, issuer}, :miss) do
-      {:ok, ^jwks, _expires_at} ->
-        :ok
-
-      _ ->
-        :persistent_term.put({__MODULE__, :jwks, issuer}, {:ok, jwks, expires_at})
-    end
-
+    :persistent_term.put({__MODULE__, :jwks, issuer}, {:ok, jwks, expires_at})
     :persistent_term.put({__MODULE__, :jwks_refreshed_at, issuer}, DateTime.utc_now())
     :ok
   end

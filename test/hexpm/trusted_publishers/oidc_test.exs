@@ -153,6 +153,29 @@ defmodule Hexpm.TrustedPublishers.OIDCTest do
     assert {:error, :signature_invalid} = OIDC.verify(token, @issuer)
   end
 
+  test "renews the cache expiry when the refetched JWKS is unchanged" do
+    verify = fn ->
+      OIDC.verify(
+        TrustedPublisherHelpers.sign_oidc_claims(TrustedPublisherHelpers.github_claims()),
+        @issuer
+      )
+    end
+
+    assert {:ok, _} = verify.()
+
+    {:ok, jwks, _expires_at} = :persistent_term.get({OIDC, :jwks, @issuer})
+    expired = DateTime.add(DateTime.utc_now(), -1, :second)
+    :persistent_term.put({OIDC, :jwks, @issuer}, {:ok, jwks, expired})
+
+    assert {:ok, _} = verify.()
+
+    stub(Hexpm.HTTP.Mock, :get, fn url, _headers, _opts ->
+      flunk("unexpected fetch of #{url}")
+    end)
+
+    assert {:ok, _} = verify.()
+  end
+
   test "accepts aud as a list containing hexpm" do
     token =
       TrustedPublisherHelpers.sign_oidc_claims(
