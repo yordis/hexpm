@@ -1,0 +1,131 @@
+defmodule Hexpm.Repo.Migrations.AddTrustedPublishers do
+  use Ecto.Migration
+
+  # oauth_tokens and releases are large and busy, so their constraints are added
+  # NOT VALID and validated separately, and their indexes are built concurrently.
+  @disable_ddl_transaction true
+  @disable_migration_lock true
+
+  @client_id "a1111111-1111-4111-8111-111111111111"
+
+  def up do
+    create_if_not_exists table(:trusted_publishers) do
+      add :package_id, references(:packages, on_delete: :delete_all), null: false
+      add :provider, :string, null: false
+      add :issuer, :string, null: false
+      add :repository_owner, :string, null: false
+      add :repository_owner_id, :string, null: false
+      add :repository_id, :string, null: false
+      add :repository, :string, null: false
+      add :workflow, :string, null: false
+      add :environment, :string, null: false, default: ""
+
+      timestamps()
+    end
+
+    create_if_not_exists unique_index(
+                           :trusted_publishers,
+                           [:package_id, :provider, :repository, :workflow, "lower(environment)"],
+                           name: :trusted_publishers_package_config_unique
+                         )
+
+    alter table(:oauth_tokens) do
+      add_if_not_exists :trusted_publisher_id,
+                        references(:trusted_publishers, on_delete: :delete_all, validate: false)
+
+      add_if_not_exists :oidc_claims, :map
+    end
+
+    alter table(:releases) do
+      add_if_not_exists :trusted_publisher_id,
+                        references(:trusted_publishers, on_delete: :nilify_all, validate: false)
+
+      add_if_not_exists :oidc_claims, :map
+    end
+
+    drop_if_exists constraint(:oauth_tokens, :user_or_organization_required)
+
+    execute """
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'user_or_organization_or_trusted_publisher_required'
+      ) THEN
+        ALTER TABLE oauth_tokens
+          ADD CONSTRAINT user_or_organization_or_trusted_publisher_required
+          CHECK (user_id IS NOT NULL OR organization_id IS NOT NULL OR trusted_publisher_id IS NOT NULL)
+          NOT VALID;
+      END IF;
+    END
+    $$
+    """
+
+    execute "ALTER TABLE oauth_tokens VALIDATE CONSTRAINT oauth_tokens_trusted_publisher_id_fkey"
+
+    execute "ALTER TABLE oauth_tokens VALIDATE CONSTRAINT user_or_organization_or_trusted_publisher_required"
+
+    execute "ALTER TABLE releases VALIDATE CONSTRAINT releases_trusted_publisher_id_fkey"
+
+    create_if_not_exists index(:oauth_tokens, [:trusted_publisher_id], concurrently: true)
+
+    # OIDC jti must never be reusable, including after token revoke/expiry.
+    create_if_not_exists unique_index(
+                           :oauth_tokens,
+                           [:grant_reference, :client_id],
+                           where:
+                             "grant_type = 'trusted_publisher' AND grant_reference IS NOT NULL",
+                           name: :oauth_tokens_trusted_publisher_grant_reference_client_id_index,
+                           concurrently: true
+                         )
+
+    create_if_not_exists index(:releases, [:trusted_publisher_id], concurrently: true)
+
+    execute """
+    INSERT INTO oauth_clients (
+      client_id, name, client_type, allowed_grant_types, allowed_scopes,
+      redirect_uris, inserted_at, updated_at
+    ) VALUES (
+      '#{@client_id}',
+      'Trusted Publisher',
+      'public',
+      ARRAY['urn:ietf:params:oauth:grant-type:jwt-bearer'],
+      ARRAY['package'],
+      ARRAY[]::text[],
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (client_id) DO NOTHING
+    """
+  end
+
+  def down do
+    execute "DELETE FROM oauth_clients WHERE client_id = '#{@client_id}'"
+
+    drop_if_exists index(:releases, [:trusted_publisher_id], concurrently: true)
+
+    drop_if_exists index(:oauth_tokens, [:grant_reference, :client_id],
+                     name: :oauth_tokens_trusted_publisher_grant_reference_client_id_index,
+                     concurrently: true
+                   )
+
+    drop_if_exists index(:oauth_tokens, [:trusted_publisher_id], concurrently: true)
+
+    drop_if_exists constraint(:oauth_tokens, :user_or_organization_or_trusted_publisher_required)
+
+    create constraint(:oauth_tokens, :user_or_organization_required,
+             check: "user_id IS NOT NULL OR organization_id IS NOT NULL"
+           )
+
+    alter table(:releases) do
+      remove_if_exists :oidc_claims, :map
+      remove_if_exists :trusted_publisher_id, :bigint
+    end
+
+    alter table(:oauth_tokens) do
+      remove_if_exists :oidc_claims, :map
+      remove_if_exists :trusted_publisher_id, :bigint
+    end
+
+    drop_if_exists table(:trusted_publishers)
+  end
+end
