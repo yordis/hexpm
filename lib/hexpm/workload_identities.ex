@@ -234,6 +234,7 @@ defmodule Hexpm.WorkloadIdentities do
   @changeable_fields [
     :workflow,
     :environment,
+    :api_access,
     :covers_private,
     :packages,
     :covers_public,
@@ -459,15 +460,17 @@ defmodule Hexpm.WorkloadIdentities do
   defp revokes_tokens?(previous, updated) do
     previous.workflow != updated.workflow or
       environment(previous) != environment(updated) or
-      not covers_repositories?(updated.repositories, previous.repositories)
+      not covers_repositories?(updated.repositories, previous.repositories) or
+      reaches_more_api?(previous.api_access, updated.api_access)
   end
 
-  # A change is emailed when the workload identity trusts a workflow run or
-  # covers a package it didn't before, the same as adding one is. A change that
-  # only narrows it, such as removing a repository or naming an environment,
-  # is only audited.
+  # A change is emailed when the workload identity trusts a workflow run,
+  # covers a package or reaches more of the API than it did before, the same as
+  # adding one is. A change that only narrows it, such as removing a repository
+  # or naming an environment, is only audited.
   defp widens_trust?(previous, updated) do
     widens_runs?(previous, updated) or
+      reaches_more_api?(updated.api_access, previous.api_access) or
       widens_coverage?(
         {previous.covers_private, previous.packages},
         {updated.covers_private, updated.packages}
@@ -484,6 +487,14 @@ defmodule Hexpm.WorkloadIdentities do
       widens_match?(previous.workflow || "", updated.workflow || "") or
       widens_match?(environment(previous), environment(updated))
   end
+
+  # Whether `api_access` reaches more of the API than `other`.
+  defp reaches_more_api?(api_access, other),
+    do: api_access_level(api_access) > api_access_level(other)
+
+  defp api_access_level(nil), do: 0
+  defp api_access_level(:read), do: 1
+  defp api_access_level(:write), do: 2
 
   defp widens_match?("", _updated), do: false
   defp widens_match?(previous, updated), do: previous != updated

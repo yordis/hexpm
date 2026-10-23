@@ -1436,6 +1436,63 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       end)
     end
 
+    test "stores API access, audits it and tells the admins what it reaches", %{
+      admin: admin,
+      organization: organization
+    } do
+      expect(Hexpm.HTTP.Mock, :get, fn "https://api.github.com/repos/acme/widget", _, _ ->
+        {:ok, 200, [], %{"id" => 99, "owner" => %{"id" => 42}}}
+      end)
+
+      assert {:ok, identity} =
+               WorkloadIdentities.create(
+                 organization,
+                 %{
+                   "provider" => "github",
+                   "repository_owner" => "acme",
+                   "repositories" => "widget",
+                   "role" => "read",
+                   "workflow" => "terraform.yml",
+                   "environment" => "production",
+                   "api_access" => "write"
+                 },
+                 audit: audit_data(admin)
+               )
+
+      assert identity.api_access == :write
+
+      log = Repo.get_by!(AuditLog, action: "organization.workload_identity.add")
+      assert log.params["api_access"] == "write"
+
+      assert_email_sent(fn email ->
+        assert email.text_body =~ "API access: write"
+        assert email.text_body =~ "through the API"
+      end)
+    end
+
+    test "refuses API access without an environment", %{admin: admin, organization: organization} do
+      stub(Hexpm.HTTP.Mock, :get, fn "https://api.github.com/repos/acme/widget", _, _ ->
+        {:ok, 200, [], %{"id" => 99, "owner" => %{"id" => 42}}}
+      end)
+
+      assert {:error, changeset} =
+               WorkloadIdentities.create(
+                 organization,
+                 %{
+                   "provider" => "github",
+                   "repository_owner" => "acme",
+                   "repositories" => "widget",
+                   "role" => "read",
+                   "workflow" => "terraform.yml",
+                   "api_access" => "read"
+                 },
+                 audit: audit_data(admin)
+               )
+
+      assert "is required for API access" in List.wrap(errors_on(changeset).environment)
+      assert WorkloadIdentities.list(organization) == []
+    end
+
     test "stores a read workload identity with no workflow", %{
       admin: admin,
       organization: organization
@@ -3478,6 +3535,144 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       assert updated.environment == "RELEASE"
       refute revoked?(token)
       refute_email_sent()
+    end
+
+    defp with_api_access(identity, api_access) do
+      identity
+      |> Ecto.Changeset.change(api_access: api_access, environment: "release")
+      |> Repo.update!()
+    end
+
+    test "grants API access, audits it and emails the admins", %{
+      admin: admin,
+      organization: organization,
+      identity: identity
+    } do
+      identity = Ecto.Changeset.change(identity, environment: "release") |> Repo.update!()
+
+      assert {:ok, updated} =
+               WorkloadIdentities.update(
+                 identity,
+                 organization_params(%{"environment" => "release", "api_access" => "read"}),
+                 audit: audit_data(admin)
+               )
+
+      assert updated.api_access == :read
+
+      log = Repo.get_by!(AuditLog, action: "organization.workload_identity.update")
+      assert log.organization_id == organization.id
+      assert log.params["api_access"] == "read"
+      assert log.params["previous"]["api_access"] == nil
+
+      assert_email_sent(fn email ->
+        assert email.subject =~ "Workload identity changed in organization #{organization.name}"
+        assert email.text_body =~ "API access: read"
+        assert email.text_body =~ "through the API"
+      end)
+    end
+
+    test "emails the admins when API access goes from read to write", %{
+      admin: admin,
+      identity: identity
+    } do
+      identity = with_api_access(identity, :read)
+
+      assert {:ok, updated} =
+               WorkloadIdentities.update(
+                 identity,
+                 organization_params(%{"environment" => "release", "api_access" => "write"}),
+                 audit: audit_data(admin)
+               )
+
+      assert updated.api_access == :write
+
+      assert_email_sent(fn email ->
+        assert email.text_body =~ "API access: read"
+        assert email.text_body =~ "API access: write"
+      end)
+    end
+
+    test "requires a repository, a workflow and an environment for API access", %{
+      admin: admin,
+      identity: identity
+    } do
+      assert {:error, changeset} =
+               WorkloadIdentities.update(
+                 identity,
+                 organization_params(%{"api_access" => "write"}),
+                 audit: audit_data(admin)
+               )
+
+      assert "is required for API access" in List.wrap(errors_on(changeset).environment)
+      refute_email_sent()
+    end
+
+    test "revokes the tokens and emails no one when API access is lowered", %{
+      admin: admin,
+      repository: repository,
+      identity: identity
+    } do
+      identity = with_api_access(identity, :write)
+
+      WorkloadIdentityHelpers.stub_oidc_discovery()
+      assert {:ok, token} = mint([repository: repository.name], environment: "release")
+
+      assert {:ok, updated} =
+               WorkloadIdentities.update(
+                 identity,
+                 organization_params(%{"environment" => "release", "api_access" => "read"}),
+                 audit: audit_data(admin)
+               )
+
+      assert updated.api_access == :read
+      assert revoked?(token)
+      refute_email_sent()
+    end
+
+    test "revokes the tokens when API access is removed", %{
+      admin: admin,
+      repository: repository,
+      identity: identity
+    } do
+      identity = with_api_access(identity, :read)
+
+      WorkloadIdentityHelpers.stub_oidc_discovery()
+      assert {:ok, token} = mint([repository: repository.name], environment: "release")
+
+      assert {:ok, updated} =
+               WorkloadIdentities.update(
+                 identity,
+                 organization_params(%{"environment" => "release", "api_access" => ""}),
+                 audit: audit_data(admin)
+               )
+
+      assert updated.api_access == nil
+      assert revoked?(token)
+      refute_email_sent()
+    end
+
+    test "keeps the tokens and emails no one when API access stays the same", %{
+      admin: admin,
+      repository: repository,
+      identity: identity
+    } do
+      identity = with_api_access(identity, :read)
+
+      WorkloadIdentityHelpers.stub_oidc_discovery()
+      assert {:ok, token} = mint([repository: repository.name], environment: "release")
+
+      assert {:ok, _updated} =
+               WorkloadIdentities.update(
+                 identity,
+                 organization_params(%{
+                   "environment" => "release",
+                   "api_access" => "read",
+                   "packages" => "widget"
+                 }),
+                 audit: audit_data(admin)
+               )
+
+      refute revoked?(token)
     end
   end
 

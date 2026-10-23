@@ -270,9 +270,20 @@ defmodule HexpmWeb.EmailView do
     end
 
     def warning(role, organization, coverage) do
-      "Anyone who can run a matching workflow can now #{reach(role, organization, coverage)}. " <>
+      "Anyone who can run a matching workflow can now " <>
+        "#{reach(role, organization, coverage)}#{api_reach(organization, coverage)}. " <>
         "If you did not expect this change, remove the workload identity and review the organization's admins."
     end
+
+    defp api_reach(organization, %{api_access: :read}),
+      do: ", and read the settings, members, keys and packages of #{organization} through the API"
+
+    defp api_reach(organization, %{api_access: :write}),
+      do:
+        ", and change the settings, members, keys and packages of #{organization} " <>
+          "through the API, with the access of an organization admin key"
+
+    defp api_reach(_organization, _coverage), do: ""
 
     defp reach("read", organization, _coverage),
       do: "fetch every package in the #{organization} repository"
@@ -324,8 +335,14 @@ defmodule HexpmWeb.EmailView do
         "Workflow: #{if workflows.workflow in [nil, ""], do: "any", else: workflows.workflow}"
       ] ++
         WorkloadIdentityDetails.environment_line(workflows.environment) ++
+        api_access_line(coverage) ++
         coverage_lines(role, organization, coverage)
     end
+
+    defp api_access_line(%{api_access: api_access}) when not is_nil(api_access),
+      do: ["API access: #{api_access}"]
+
+    defp api_access_line(_coverage), do: []
 
     defp repositories_line(%{repositories: [], repository_owner: owner}),
       do: "GitHub repositories: any repository owned by #{owner}"
