@@ -18,6 +18,9 @@ defmodule HexpmWeb.AuthHelpers do
     workload_identity = Map.get(conn.assigns, :workload_identity)
 
     cond do
+      match?(%WorkloadIdentity{}, workload_identity) and api_token?(conn.assigns.auth_credential) ->
+        authorized_api_workload_identity(conn, workload_identity, opts)
+
       match?(%WorkloadIdentity{}, workload_identity) ->
         authorized_workload_identity(conn, workload_identity, opts)
 
@@ -60,6 +63,27 @@ defmodule HexpmWeb.AuthHelpers do
 
       true ->
         conn
+    end
+  end
+
+  defp api_token?(%Token{} = token), do: Token.api?(token)
+  defp api_token?(_auth_credential), do: false
+
+  # A workload identity token with an API scope is its organization's API
+  # credential, so it goes through the same checks as one of the organization's
+  # API keys with that permission. Authentication sets the organization for
+  # these tokens only, and it has to be the workload identity's own.
+  defp authorized_api_workload_identity(
+         conn,
+         %WorkloadIdentity{organization_id: organization_id},
+         opts
+       ) do
+    case conn.assigns.current_organization do
+      %Organization{id: ^organization_id} = organization when not is_nil(organization_id) ->
+        authorized(conn, organization, opts[:fun], opts)
+
+      _other ->
+        error(conn, {:error, :auth})
     end
   end
 

@@ -294,11 +294,11 @@ defmodule HexpmWeb.API.OAuthController do
 
   defp handle_jwt_bearer_grant(conn, params) do
     if WorkloadIdentities.available?() do
-      with {:ok, scope} <- parse_workload_identity_scope(params["scope"]),
+      with {:ok, target} <- parse_workload_identity_target(params["scope"], params["resource"]),
            {:ok, assertion} <- fetch_assertion(params),
            {:ok, verified} <- verify_assertion(assertion),
            :ok <- check_mint_rate_limit(verified),
-           {:ok, token} <- mint_workload_identity_token(verified, scope) do
+           {:ok, token} <- mint_workload_identity_token(verified, target) do
         render(conn, :token, token: token)
       else
         {:error, error, description} ->
@@ -336,8 +336,8 @@ defmodule HexpmWeb.API.OAuthController do
     end
   end
 
-  defp mint_workload_identity_token(verified, scope) do
-    case WorkloadIdentities.mint(verified, scope) do
+  defp mint_workload_identity_token(verified, target) do
+    case WorkloadIdentities.mint(verified, target) do
       {:ok, token} ->
         {:ok, token}
 
@@ -361,14 +361,42 @@ defmodule HexpmWeb.API.OAuthController do
 
   defp counts_toward_mint_limit?(_reason, error), do: error != :server_error
 
-  defp parse_workload_identity_scope(scope_string) when is_binary(scope_string) do
+  # RFC 8707: an API scope says what the token may do and the resource says
+  # whose API it does it in. Package and repository scopes name their own
+  # resource, so a resource with them is refused rather than ignored.
+  defp parse_workload_identity_target(scope_string, resource) when is_binary(scope_string) do
     case String.split(scope_string, " ", trim: true) do
-      [scope] -> parse_workload_identity_scope_value(scope)
-      _ -> {:error, :invalid_scope, "Expected exactly one package or repository scope"}
+      ["api:read"] -> parse_api_target(:read, resource)
+      ["api:write"] -> parse_api_target(:write, resource)
+      [scope] -> parse_resourceless_target(scope, resource)
+      _ -> {:error, :invalid_scope, "Expected exactly one package, repository or API scope"}
     end
   end
 
-  defp parse_workload_identity_scope(_), do: {:error, :invalid_scope, "Missing scope parameter"}
+  defp parse_workload_identity_target(_, _),
+    do: {:error, :invalid_scope, "Missing scope parameter"}
+
+  defp parse_api_target(api_access, resource) when is_binary(resource) do
+    case WorkloadIdentities.parse_resource(resource) do
+      {:ok, owner} ->
+        {:ok, api_access: api_access, owner: owner}
+
+      {:error, :unsupported_resource} ->
+        {:error, :invalid_target, "Only organization resources are supported"}
+
+      {:error, :invalid_resource} ->
+        {:error, :invalid_target, "Expected a resource in the form organization:name"}
+    end
+  end
+
+  defp parse_api_target(_api_access, _resource),
+    do:
+      {:error, :invalid_target, "An API scope requires a resource in the form organization:name"}
+
+  defp parse_resourceless_target(scope, nil), do: parse_workload_identity_scope_value(scope)
+
+  defp parse_resourceless_target(_scope, _resource),
+    do: {:error, :invalid_target, "Only API scopes take a resource"}
 
   defp parse_workload_identity_scope_value("package:" <> resource) do
     case String.split(resource, "/", parts: 2) do
@@ -411,7 +439,12 @@ defmodule HexpmWeb.API.OAuthController do
     do: {:unsupported_grant_type, "Workload Identity is disabled"}
 
   defp jwt_bearer_error(reason)
-       when reason in [:repository_not_found, :package_not_found, :no_matching_identity],
+       when reason in [
+              :repository_not_found,
+              :package_not_found,
+              :organization_not_found,
+              :no_matching_identity
+            ],
        do: {:access_denied, "No matching workload identity"}
 
   defp jwt_bearer_error(:billing_inactive),
@@ -756,6 +789,7 @@ defmodule HexpmWeb.API.OAuthController do
   defp error_status(:unauthorized_client), do: 400
   defp error_status(:unsupported_grant_type), do: 400
   defp error_status(:invalid_scope), do: 400
+  defp error_status(:invalid_target), do: 400
   defp error_status(:access_denied), do: 403
   defp error_status(:server_error), do: 500
   defp error_status(:authorization_pending), do: 400

@@ -3763,4 +3763,192 @@ defmodule Hexpm.WorkloadIdentitiesTest do
              }) == []
     end
   end
+
+  describe "verify_and_mint/2 for API access" do
+    setup do
+      organization = insert(:organization)
+      %{organization: organization}
+    end
+
+    defp api_identity(organization, api_access, opts \\ []) do
+      insert(
+        :organization_workload_identity,
+        Keyword.merge(
+          [
+            organization: organization,
+            api_access: api_access,
+            workflow: "release.yml",
+            environment: "release",
+            repositories: [trusted("acme/widget")]
+          ],
+          opts
+        )
+      )
+    end
+
+    defp mint_api(organization, api_access, claims \\ [environment: "release"]) do
+      mint([api_access: api_access, owner: {:organization, organization.name}], claims)
+    end
+
+    test "mints an api:read token for a read identity", %{organization: organization} do
+      identity = api_identity(organization, :read)
+
+      assert {:ok, token} = mint_api(organization, :read)
+      assert token.scopes == ["api:read"]
+      assert token.workload_identity_id == identity.id
+
+      {:ok, claims} = Joken.peek_claims(token.access_token)
+      assert claims["sub"] == "workload_identity:#{identity.id}"
+      assert claims["scope"] == "api:read"
+      assert is_nil(token.refresh_token)
+    end
+
+    test "mints an api:write token for a write identity", %{organization: organization} do
+      api_identity(organization, :write)
+
+      assert {:ok, token} = mint_api(organization, :write)
+      assert token.scopes == ["api:write"]
+    end
+
+    test "a write identity can get an api:read token", %{organization: organization} do
+      api_identity(organization, :write)
+
+      assert {:ok, token} = mint_api(organization, :read)
+      assert token.scopes == ["api:read"]
+    end
+
+    test "a read identity is refused api:write", %{organization: organization} do
+      api_identity(organization, :read)
+
+      assert {:error, :no_matching_identity} = mint_api(organization, :write)
+    end
+
+    test "an identity without api access is not matched", %{organization: organization} do
+      api_identity(organization, nil)
+
+      assert {:error, :no_matching_identity} = mint_api(organization, :read)
+    end
+
+    test "claims that do not match are refused", %{organization: organization} do
+      api_identity(organization, :write)
+
+      assert {:error, :no_matching_identity} =
+               mint_api(organization, :read, environment: "staging")
+
+      WorkloadIdentityHelpers.stub_oidc_discovery()
+
+      assert {:error, :no_matching_identity} =
+               mint_api(organization, :read, environment: "release", workflow: "other.yml")
+    end
+
+    test "another organization's identity is not matched", %{organization: organization} do
+      other = insert(:organization)
+      api_identity(other, :write)
+
+      assert {:error, :no_matching_identity} = mint_api(organization, :read)
+    end
+
+    test "an unknown organization is refused" do
+      assert {:error, :organization_not_found} =
+               mint([api_access: :read, owner: {:organization, "missing"}],
+                 environment: "release"
+               )
+    end
+
+    test "is refused when the organization is not enabled", %{organization: organization} do
+      api_identity(organization, :write)
+
+      put_feature_flag(:workload_identity,
+        mode: :beta,
+        beta_users: [],
+        beta_organizations: ["some-other-organization"]
+      )
+
+      assert {:error, :no_matching_identity} = mint_api(organization, :read)
+    end
+
+    test "an OIDC token cannot be exchanged twice", %{organization: organization} do
+      api_identity(organization, :write)
+
+      oidc =
+        [environment: "release"]
+        |> WorkloadIdentityHelpers.github_claims()
+        |> WorkloadIdentityHelpers.sign_oidc_claims()
+
+      opts = [api_access: :read, owner: {:organization, organization.name}]
+
+      assert {:ok, _token} = WorkloadIdentities.verify_and_mint(oidc, opts)
+      assert {:error, :token_replayed} = WorkloadIdentities.verify_and_mint(oidc, opts)
+    end
+
+    test "narrowing api access revokes the issued token", %{organization: organization} do
+      identity = api_identity(organization, :write)
+      admin = insert(:user)
+      insert(:organization_user, organization: organization, user: admin, role: "admin")
+
+      assert {:ok, token} = mint_api(organization, :write)
+      refute revoked?(token)
+
+      identity = Repo.preload(identity, :organization)
+
+      assert {:ok, %{api_access: :read}} =
+               WorkloadIdentities.update(
+                 identity,
+                 %{
+                   "repositories" => "widget",
+                   "workflow" => "release.yml",
+                   "environment" => "release",
+                   "covers_private" => "true",
+                   "packages" => "",
+                   "covers_public" => "true",
+                   "public_packages" => "",
+                   "api_access" => "read"
+                 },
+                 audit: audit_data(admin)
+               )
+
+      assert revoked?(token)
+    end
+
+    test "api_access_covers?/2 follows the token scopes" do
+      write = %Hexpm.WorkloadIdentities.WorkloadIdentity{api_access: :write}
+      read = %Hexpm.WorkloadIdentities.WorkloadIdentity{api_access: :read}
+      none = %Hexpm.WorkloadIdentities.WorkloadIdentity{api_access: nil}
+
+      assert WorkloadIdentities.api_access_covers?(write, ["api:write"])
+      assert WorkloadIdentities.api_access_covers?(write, ["api:read"])
+      assert WorkloadIdentities.api_access_covers?(read, ["api:read"])
+      refute WorkloadIdentities.api_access_covers?(read, ["api:write"])
+      refute WorkloadIdentities.api_access_covers?(none, ["api:read"])
+      refute WorkloadIdentities.api_access_covers?(write, ["repository:hexpm"])
+    end
+  end
+
+  describe "parse_resource/1" do
+    test "parses an organization resource" do
+      assert {:ok, {:organization, "acme"}} =
+               WorkloadIdentities.parse_resource("organization:acme")
+    end
+
+    test "rejects a user resource as unsupported" do
+      assert {:error, :unsupported_resource} = WorkloadIdentities.parse_resource("user:alice")
+    end
+
+    test "rejects anything else as invalid" do
+      for resource <- [
+            "",
+            "acme",
+            "organization:",
+            "organization:a b",
+            "organization:a/b",
+            "organization:a:b",
+            "org:acme",
+            "https://hex.pm/orgs/acme",
+            String.duplicate("a", 300)
+          ] do
+        assert {:error, :invalid_resource} = WorkloadIdentities.parse_resource(resource),
+               "expected #{inspect(resource)} to be invalid"
+      end
+    end
+  end
 end

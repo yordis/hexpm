@@ -92,6 +92,10 @@ defmodule Hexpm.OAuth.Token do
 
   def valid_grant_types, do: @valid_grant_types
 
+  @api_scopes ~w(api api:read api:write)
+
+  def api?(%__MODULE__{scopes: scopes}), do: Enum.any?(scopes, &(&1 in @api_scopes))
+
   defp validate_client_present(changeset) do
     if get_field(changeset, :grant_type) == "workload_identity" do
       changeset

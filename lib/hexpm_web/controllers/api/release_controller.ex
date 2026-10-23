@@ -305,9 +305,9 @@ defmodule HexpmWeb.API.ReleaseController do
 
   defp publisher_for(conn) do
     cond do
-      Map.get(conn.assigns, :workload_identity) -> nil
       conn.assigns.current_user -> conn.assigns.current_user
       conn.assigns.current_organization -> conn.assigns.current_organization.user
+      Map.get(conn.assigns, :workload_identity) -> nil
     end
   end
 

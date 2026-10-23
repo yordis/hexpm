@@ -558,4 +558,164 @@ defmodule HexpmWeb.API.OAuthControllerWorkloadIdentityTest do
       assert body["error_description"] =~ "no active billing subscription"
     end
   end
+
+  describe "API access" do
+    setup do
+      organization = insert(:organization)
+
+      identity =
+        insert(:organization_workload_identity,
+          organization: organization,
+          api_access: :write,
+          workflow: "release.yml",
+          environment: "release",
+          repositories: [
+            %Hexpm.WorkloadIdentities.TrustedRepository{name: "acme/widget", id: "67890"}
+          ]
+        )
+
+      %{organization: organization, identity: identity}
+    end
+
+    defp api_oidc(opts \\ []) do
+      [environment: "release"]
+      |> Keyword.merge(opts)
+      |> WorkloadIdentityHelpers.github_claims()
+      |> WorkloadIdentityHelpers.sign_oidc_claims()
+    end
+
+    defp exchange(oidc, scope, resource) do
+      params = mint_params(oidc, scope)
+      params = if resource, do: Map.put(params, "resource", resource), else: params
+      post(build_conn(), "/api/oauth/token", params)
+    end
+
+    test "exchanges for an api:write token", %{organization: organization} do
+      body =
+        api_oidc()
+        |> exchange("api:write", "organization:#{organization.name}")
+        |> json_response(200)
+
+      assert body["scope"] == "api:write"
+      assert body["token_type"] == "bearer"
+      assert body["expires_in"] > 0
+      refute Map.has_key?(body, "refresh_token")
+    end
+
+    test "a write identity can exchange for api:read", %{organization: organization} do
+      body =
+        api_oidc()
+        |> exchange("api:read", "organization:#{organization.name}")
+        |> json_response(200)
+
+      assert body["scope"] == "api:read"
+    end
+
+    test "a read identity is refused api:write", %{organization: organization, identity: identity} do
+      identity |> Ecto.Changeset.change(api_access: :read) |> Hexpm.Repo.update!()
+
+      denied =
+        api_oidc()
+        |> exchange("api:write", "organization:#{organization.name}")
+        |> json_response(403)
+
+      assert denied["error"] == "access_denied"
+
+      WorkloadIdentityHelpers.stub_oidc_discovery()
+
+      assert api_oidc()
+             |> exchange("api:read", "organization:#{organization.name}")
+             |> json_response(200)
+    end
+
+    test "requires a resource for an API scope" do
+      for scope <- ["api:read", "api:write"] do
+        body = api_oidc() |> exchange(scope, nil) |> json_response(400)
+        assert body["error"] == "invalid_target"
+        WorkloadIdentityHelpers.stub_oidc_discovery()
+      end
+    end
+
+    test "rejects a malformed or unsupported resource" do
+      for resource <- [
+            "acme",
+            "organization:",
+            "organization:a b",
+            "organization:a/b",
+            "https://hex.pm/orgs/acme",
+            "user:alice"
+          ] do
+        body = api_oidc() |> exchange("api:read", resource) |> json_response(400)
+        assert body["error"] == "invalid_target", "expected #{inspect(resource)} to be rejected"
+        WorkloadIdentityHelpers.stub_oidc_discovery()
+      end
+    end
+
+    test "rejects a resource sent with a package scope", %{package: package} do
+      body =
+        WorkloadIdentityHelpers.github_claims()
+        |> WorkloadIdentityHelpers.sign_oidc_claims()
+        |> exchange("package:hexpm/#{package.name}", "organization:acme")
+        |> json_response(400)
+
+      assert body["error"] == "invalid_target"
+    end
+
+    test "answers an unknown organization like no match", %{organization: organization} do
+      unmatched =
+        api_oidc(workflow: "other.yml")
+        |> exchange("api:read", "organization:#{organization.name}")
+
+      WorkloadIdentityHelpers.stub_oidc_discovery()
+      unknown = api_oidc() |> exchange("api:read", "organization:does-not-exist")
+
+      assert unknown.status == 403
+
+      assert {unknown.status, JSON.decode!(unknown.resp_body)} ==
+               {unmatched.status, JSON.decode!(unmatched.resp_body)}
+    end
+
+    test "does not match another organization's identity" do
+      other = insert(:organization)
+
+      body =
+        api_oidc()
+        |> exchange("api:read", "organization:#{other.name}")
+        |> json_response(403)
+
+      assert body["error"] == "access_denied"
+    end
+
+    test "answers an organization without the feature like no match", %{
+      organization: organization
+    } do
+      put_feature_flag(:workload_identity,
+        mode: :beta,
+        beta_users: [],
+        beta_organizations: ["some-other-organization"]
+      )
+
+      body =
+        api_oidc()
+        |> exchange("api:read", "organization:#{organization.name}")
+        |> json_response(403)
+
+      assert body["error"] == "access_denied"
+    end
+
+    test "refuses to replay an OIDC token", %{organization: organization} do
+      oidc = api_oidc()
+
+      assert oidc
+             |> exchange("api:read", "organization:#{organization.name}")
+             |> json_response(200)
+
+      body =
+        oidc
+        |> exchange("api:read", "organization:#{organization.name}")
+        |> json_response(400)
+
+      assert body["error"] == "invalid_grant"
+    end
+  end
 end

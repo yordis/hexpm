@@ -123,11 +123,11 @@ defmodule HexpmWeb.Plugs.Attack do
       user = conn.assigns[:current_user] ->
         "user #{user.id}"
 
-      organization = conn.assigns[:current_organization] ->
-        "organization #{organization.id}"
-
       workload_identity = conn.assigns[:workload_identity] ->
         "workload identity #{workload_identity.id}"
+
+      organization = conn.assigns[:current_organization] ->
+        "organization #{organization.id}"
 
       connection = conn.assigns[:scim_connection] ->
         "provisioning connection #{connection.id}"
