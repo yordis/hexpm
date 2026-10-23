@@ -488,7 +488,6 @@ defmodule Hexpm.WorkloadIdentities do
       widens_match?(environment(previous), environment(updated))
   end
 
-  # Whether `api_access` reaches more of the API than `other`.
   defp reaches_more_api?(api_access, other),
     do: api_access_level(api_access) > api_access_level(other)
 
