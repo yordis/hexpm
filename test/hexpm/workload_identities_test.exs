@@ -1454,18 +1454,18 @@ defmodule Hexpm.WorkloadIdentitiesTest do
                    "role" => "read",
                    "workflow" => "terraform.yml",
                    "environment" => "production",
-                   "api_role" => "write"
+                   "allowed_scopes" => ["api:write"]
                  },
                  audit: audit_data(admin)
                )
 
-      assert identity.api_role == "write"
+      assert identity.allowed_scopes == ["api:write"]
 
       log = Repo.get_by!(AuditLog, action: "organization.workload_identity.add")
-      assert log.params["api_role"] == "write"
+      assert log.params["allowed_scopes"] == ["api:write"]
 
       assert_email_sent(fn email ->
-        assert email.text_body =~ "API access: write"
+        assert email.text_body =~ "API access: api:write"
         assert email.text_body =~ "through the API"
       end)
     end
@@ -1484,7 +1484,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
                    "repositories" => "widget",
                    "role" => "read",
                    "workflow" => "terraform.yml",
-                   "api_role" => "read"
+                   "allowed_scopes" => ["api:read"]
                  },
                  audit: audit_data(admin)
                )
@@ -3537,9 +3537,9 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       refute_email_sent()
     end
 
-    defp with_api_role(identity, api_role) do
+    defp with_allowed_scopes(identity, allowed_scopes) do
       identity
-      |> Ecto.Changeset.change(api_role: api_role, environment: "release")
+      |> Ecto.Changeset.change(allowed_scopes: allowed_scopes, environment: "release")
       |> Repo.update!()
     end
 
@@ -3553,20 +3553,23 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       assert {:ok, updated} =
                WorkloadIdentities.update(
                  identity,
-                 organization_params(%{"environment" => "release", "api_role" => "read"}),
+                 organization_params(%{
+                   "environment" => "release",
+                   "allowed_scopes" => ["api:read"]
+                 }),
                  audit: audit_data(admin)
                )
 
-      assert updated.api_role == "read"
+      assert updated.allowed_scopes == ["api:read"]
 
       log = Repo.get_by!(AuditLog, action: "organization.workload_identity.update")
       assert log.organization_id == organization.id
-      assert log.params["api_role"] == "read"
-      assert log.params["previous"]["api_role"] == nil
+      assert log.params["allowed_scopes"] == ["api:read"]
+      assert log.params["previous"]["allowed_scopes"] == []
 
       assert_email_sent(fn email ->
         assert email.subject =~ "Workload identity changed in organization #{organization.name}"
-        assert email.text_body =~ "API access: read"
+        assert email.text_body =~ "API access: api:read"
         assert email.text_body =~ "through the API"
       end)
     end
@@ -3575,20 +3578,23 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       admin: admin,
       identity: identity
     } do
-      identity = with_api_role(identity, "read")
+      identity = with_allowed_scopes(identity, ["api:read"])
 
       assert {:ok, updated} =
                WorkloadIdentities.update(
                  identity,
-                 organization_params(%{"environment" => "release", "api_role" => "write"}),
+                 organization_params(%{
+                   "environment" => "release",
+                   "allowed_scopes" => ["api:write"]
+                 }),
                  audit: audit_data(admin)
                )
 
-      assert updated.api_role == "write"
+      assert updated.allowed_scopes == ["api:write"]
 
       assert_email_sent(fn email ->
-        assert email.text_body =~ "API access: read"
-        assert email.text_body =~ "API access: write"
+        assert email.text_body =~ "API access: api:read"
+        assert email.text_body =~ "API access: api:write"
       end)
     end
 
@@ -3599,7 +3605,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       assert {:error, changeset} =
                WorkloadIdentities.update(
                  identity,
-                 organization_params(%{"api_role" => "write"}),
+                 organization_params(%{"allowed_scopes" => ["api:write"]}),
                  audit: audit_data(admin)
                )
 
@@ -3612,7 +3618,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       repository: repository,
       identity: identity
     } do
-      identity = with_api_role(identity, "write")
+      identity = with_allowed_scopes(identity, ["api:write"])
 
       WorkloadIdentityHelpers.stub_oidc_discovery()
       assert {:ok, token} = mint([repository: repository.name], environment: "release")
@@ -3620,11 +3626,14 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       assert {:ok, updated} =
                WorkloadIdentities.update(
                  identity,
-                 organization_params(%{"environment" => "release", "api_role" => "read"}),
+                 organization_params(%{
+                   "environment" => "release",
+                   "allowed_scopes" => ["api:read"]
+                 }),
                  audit: audit_data(admin)
                )
 
-      assert updated.api_role == "read"
+      assert updated.allowed_scopes == ["api:read"]
       assert revoked?(token)
       refute_email_sent()
     end
@@ -3634,7 +3643,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       repository: repository,
       identity: identity
     } do
-      identity = with_api_role(identity, "read")
+      identity = with_allowed_scopes(identity, ["api:read"])
 
       WorkloadIdentityHelpers.stub_oidc_discovery()
       assert {:ok, token} = mint([repository: repository.name], environment: "release")
@@ -3642,11 +3651,11 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       assert {:ok, updated} =
                WorkloadIdentities.update(
                  identity,
-                 organization_params(%{"environment" => "release", "api_role" => ""}),
+                 organization_params(%{"environment" => "release", "allowed_scopes" => [""]}),
                  audit: audit_data(admin)
                )
 
-      assert updated.api_role == nil
+      assert updated.allowed_scopes == []
       assert revoked?(token)
       refute_email_sent()
     end
@@ -3656,7 +3665,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       repository: repository,
       identity: identity
     } do
-      identity = with_api_role(identity, "read")
+      identity = with_allowed_scopes(identity, ["api:read"])
 
       WorkloadIdentityHelpers.stub_oidc_discovery()
       assert {:ok, token} = mint([repository: repository.name], environment: "release")
@@ -3666,7 +3675,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
                  identity,
                  organization_params(%{
                    "environment" => "release",
-                   "api_role" => "read",
+                   "allowed_scopes" => ["api:read"],
                    "packages" => "widget"
                  }),
                  audit: audit_data(admin)
@@ -3770,13 +3779,13 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       %{organization: organization}
     end
 
-    defp api_identity(organization, api_role, opts \\ []) do
+    defp api_identity(organization, allowed_scopes, opts \\ []) do
       insert(
         :organization_workload_identity,
         Keyword.merge(
           [
             organization: organization,
-            api_role: api_role,
+            allowed_scopes: allowed_scopes,
             workflow: "release.yml",
             environment: "release",
             repositories: [trusted("acme/widget")]
@@ -3786,14 +3795,14 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       )
     end
 
-    defp mint_api(organization, api_role, claims \\ [environment: "release"]) do
-      mint([api_role: api_role, owner: {:organization, organization.name}], claims)
+    defp mint_api(organization, api_scope, claims \\ [environment: "release"]) do
+      mint([api_scope: api_scope, owner: {:organization, organization.name}], claims)
     end
 
     test "mints an api:read token for a read identity", %{organization: organization} do
-      identity = api_identity(organization, "read")
+      identity = api_identity(organization, ["api:read"])
 
-      assert {:ok, token} = mint_api(organization, "read")
+      assert {:ok, token} = mint_api(organization, "api:read")
       assert token.scopes == ["api:read"]
       assert token.workload_identity_id == identity.id
 
@@ -3804,59 +3813,59 @@ defmodule Hexpm.WorkloadIdentitiesTest do
     end
 
     test "mints an api:write token for a write identity", %{organization: organization} do
-      api_identity(organization, "write")
+      api_identity(organization, ["api:write"])
 
-      assert {:ok, token} = mint_api(organization, "write")
+      assert {:ok, token} = mint_api(organization, "api:write")
       assert token.scopes == ["api:write"]
     end
 
     test "a write identity can get an api:read token", %{organization: organization} do
-      api_identity(organization, "write")
+      api_identity(organization, ["api:write"])
 
-      assert {:ok, token} = mint_api(organization, "read")
+      assert {:ok, token} = mint_api(organization, "api:read")
       assert token.scopes == ["api:read"]
     end
 
     test "a read identity is refused api:write", %{organization: organization} do
-      api_identity(organization, "read")
+      api_identity(organization, ["api:read"])
 
-      assert {:error, :no_matching_identity} = mint_api(organization, "write")
+      assert {:error, :no_matching_identity} = mint_api(organization, "api:write")
     end
 
     test "an identity without api access is not matched", %{organization: organization} do
-      api_identity(organization, nil)
+      api_identity(organization, [])
 
-      assert {:error, :no_matching_identity} = mint_api(organization, "read")
+      assert {:error, :no_matching_identity} = mint_api(organization, "api:read")
     end
 
     test "claims that do not match are refused", %{organization: organization} do
-      api_identity(organization, "write")
+      api_identity(organization, ["api:write"])
 
       assert {:error, :no_matching_identity} =
-               mint_api(organization, "read", environment: "staging")
+               mint_api(organization, "api:read", environment: "staging")
 
       WorkloadIdentityHelpers.stub_oidc_discovery()
 
       assert {:error, :no_matching_identity} =
-               mint_api(organization, "read", environment: "release", workflow: "other.yml")
+               mint_api(organization, "api:read", environment: "release", workflow: "other.yml")
     end
 
     test "another organization's identity is not matched", %{organization: organization} do
       other = insert(:organization)
-      api_identity(other, "write")
+      api_identity(other, ["api:write"])
 
-      assert {:error, :no_matching_identity} = mint_api(organization, "read")
+      assert {:error, :no_matching_identity} = mint_api(organization, "api:read")
     end
 
     test "an unknown organization is refused" do
       assert {:error, :organization_not_found} =
-               mint([api_role: "read", owner: {:organization, "missing"}],
+               mint([api_scope: "api:read", owner: {:organization, "missing"}],
                  environment: "release"
                )
     end
 
     test "is refused when the organization is not enabled", %{organization: organization} do
-      api_identity(organization, "write")
+      api_identity(organization, ["api:write"])
 
       put_feature_flag(:workload_identity,
         mode: :beta,
@@ -3864,34 +3873,34 @@ defmodule Hexpm.WorkloadIdentitiesTest do
         beta_organizations: ["some-other-organization"]
       )
 
-      assert {:error, :no_matching_identity} = mint_api(organization, "read")
+      assert {:error, :no_matching_identity} = mint_api(organization, "api:read")
     end
 
     test "an OIDC token cannot be exchanged twice", %{organization: organization} do
-      api_identity(organization, "write")
+      api_identity(organization, ["api:write"])
 
       oidc =
         [environment: "release"]
         |> WorkloadIdentityHelpers.github_claims()
         |> WorkloadIdentityHelpers.sign_oidc_claims()
 
-      opts = [api_role: "read", owner: {:organization, organization.name}]
+      opts = [api_scope: "api:read", owner: {:organization, organization.name}]
 
       assert {:ok, _token} = WorkloadIdentities.verify_and_mint(oidc, opts)
       assert {:error, :token_replayed} = WorkloadIdentities.verify_and_mint(oidc, opts)
     end
 
     test "narrowing api access revokes the issued token", %{organization: organization} do
-      identity = api_identity(organization, "write")
+      identity = api_identity(organization, ["api:write"])
       admin = insert(:user)
       insert(:organization_user, organization: organization, user: admin, role: "admin")
 
-      assert {:ok, token} = mint_api(organization, "write")
+      assert {:ok, token} = mint_api(organization, "api:write")
       refute revoked?(token)
 
       identity = Repo.preload(identity, :organization)
 
-      assert {:ok, %{api_role: "read"}} =
+      assert {:ok, %{allowed_scopes: ["api:read"]}} =
                WorkloadIdentities.update(
                  identity,
                  %{
@@ -3902,7 +3911,7 @@ defmodule Hexpm.WorkloadIdentitiesTest do
                    "packages" => "",
                    "covers_public" => "true",
                    "public_packages" => "",
-                   "api_role" => "read"
+                   "allowed_scopes" => ["api:read"]
                  },
                  audit: audit_data(admin)
                )
@@ -3910,17 +3919,17 @@ defmodule Hexpm.WorkloadIdentitiesTest do
       assert revoked?(token)
     end
 
-    test "api_role_covers?/2 follows the token scopes" do
-      write = %Hexpm.WorkloadIdentities.WorkloadIdentity{api_role: "write"}
-      read = %Hexpm.WorkloadIdentities.WorkloadIdentity{api_role: "read"}
-      none = %Hexpm.WorkloadIdentities.WorkloadIdentity{api_role: nil}
+    test "allowed_scopes_cover?/2 follows the token scopes" do
+      write = %Hexpm.WorkloadIdentities.WorkloadIdentity{allowed_scopes: ["api:write"]}
+      read = %Hexpm.WorkloadIdentities.WorkloadIdentity{allowed_scopes: ["api:read"]}
+      none = %Hexpm.WorkloadIdentities.WorkloadIdentity{allowed_scopes: []}
 
-      assert WorkloadIdentities.api_role_covers?(write, ["api:write"])
-      assert WorkloadIdentities.api_role_covers?(write, ["api:read"])
-      assert WorkloadIdentities.api_role_covers?(read, ["api:read"])
-      refute WorkloadIdentities.api_role_covers?(read, ["api:write"])
-      refute WorkloadIdentities.api_role_covers?(none, ["api:read"])
-      refute WorkloadIdentities.api_role_covers?(write, ["repository:hexpm"])
+      assert WorkloadIdentities.allowed_scopes_cover?(write, ["api:write"])
+      assert WorkloadIdentities.allowed_scopes_cover?(write, ["api:read"])
+      assert WorkloadIdentities.allowed_scopes_cover?(read, ["api:read"])
+      refute WorkloadIdentities.allowed_scopes_cover?(read, ["api:write"])
+      refute WorkloadIdentities.allowed_scopes_cover?(none, ["api:read"])
+      refute WorkloadIdentities.allowed_scopes_cover?(write, ["repository:hexpm"])
     end
   end
 

@@ -275,15 +275,19 @@ defmodule HexpmWeb.EmailView do
         "If you did not expect this change, remove the workload identity and review the organization's admins."
     end
 
-    defp api_reach(organization, %{api_role: "read"}),
-      do: ", and read the settings, members, keys and packages of #{organization} through the API"
+    defp api_reach(organization, %{allowed_scopes: scopes}) do
+      cond do
+        "api:write" in scopes ->
+          ", and change the settings, members, keys and packages of #{organization} " <>
+            "through the API, with the access of an organization admin key"
 
-    defp api_reach(organization, %{api_role: "write"}),
-      do:
-        ", and change the settings, members, keys and packages of #{organization} " <>
-          "through the API, with the access of an organization admin key"
+        "api:read" in scopes ->
+          ", and read the settings, members, keys and packages of #{organization} through the API"
 
-    defp api_reach(_organization, _coverage), do: ""
+        true ->
+          ""
+      end
+    end
 
     defp reach("read", organization, _coverage),
       do: "fetch every package in the #{organization} repository"
@@ -335,14 +339,14 @@ defmodule HexpmWeb.EmailView do
         "Workflow: #{if workflows.workflow in [nil, ""], do: "any", else: workflows.workflow}"
       ] ++
         WorkloadIdentityDetails.environment_line(workflows.environment) ++
-        api_role_line(coverage) ++
+        allowed_scopes_line(coverage) ++
         coverage_lines(role, organization, coverage)
     end
 
-    defp api_role_line(%{api_role: api_role}) when not is_nil(api_role),
-      do: ["API access: #{api_role}"]
+    defp allowed_scopes_line(%{allowed_scopes: [_ | _] = scopes}),
+      do: ["API access: #{Enum.join(scopes, ", ")}"]
 
-    defp api_role_line(_coverage), do: []
+    defp allowed_scopes_line(_coverage), do: []
 
     defp repositories_line(%{repositories: [], repository_owner: owner}),
       do: "GitHub repositories: any repository owned by #{owner}"

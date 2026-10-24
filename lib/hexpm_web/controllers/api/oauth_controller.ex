@@ -366,8 +366,7 @@ defmodule HexpmWeb.API.OAuthController do
   # resource, so a resource with them is refused rather than ignored.
   defp parse_workload_identity_target(scope_string, resource) when is_binary(scope_string) do
     case String.split(scope_string, " ", trim: true) do
-      ["api:read"] -> parse_api_target("read", resource)
-      ["api:write"] -> parse_api_target("write", resource)
+      [scope] when scope in ~w(api:read api:write) -> parse_api_target(scope, resource)
       [scope] -> parse_resourceless_target(scope, resource)
       _ -> {:error, :invalid_scope, "Expected exactly one package, repository or API scope"}
     end
@@ -376,10 +375,10 @@ defmodule HexpmWeb.API.OAuthController do
   defp parse_workload_identity_target(_, _),
     do: {:error, :invalid_scope, "Missing scope parameter"}
 
-  defp parse_api_target(api_role, resource) when is_binary(resource) do
+  defp parse_api_target(api_scope, resource) when is_binary(resource) do
     case WorkloadIdentities.parse_resource(resource) do
       {:ok, owner} ->
-        {:ok, api_role: api_role, owner: owner}
+        {:ok, api_scope: api_scope, owner: owner}
 
       {:error, :unsupported_resource} ->
         {:error, :invalid_target, "Only organization resources are supported"}
@@ -389,7 +388,7 @@ defmodule HexpmWeb.API.OAuthController do
     end
   end
 
-  defp parse_api_target(_api_role, _resource),
+  defp parse_api_target(_api_scope, _resource),
     do:
       {:error, :invalid_target, "An API scope requires a resource in the form organization:name"}
 

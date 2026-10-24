@@ -13,11 +13,13 @@ defmodule Hexpm.WorkloadIdentities do
 
   alias Hexpm.FeatureFlags
   alias Hexpm.OAuth.{JWT, Token}
+  alias Hexpm.Permissions
   alias Hexpm.Accounts.Organizations
   alias Hexpm.Repository.{Package, Repositories, Repository}
   alias Hexpm.WorkloadIdentities.{OIDC, Provider, WorkloadIdentity, VerifiedToken}
 
   @mint_expires_in 15 * 60
+  @api_scopes ~w(api:read api:write)
 
   # An organization workload identity publishes a public package its
   # organization is a full owner of, the level a user needs to add a workload
@@ -235,7 +237,7 @@ defmodule Hexpm.WorkloadIdentities do
   @changeable_fields [
     :workflow,
     :environment,
-    :api_role,
+    :allowed_scopes,
     :covers_private,
     :packages,
     :covers_public,
@@ -462,7 +464,7 @@ defmodule Hexpm.WorkloadIdentities do
     previous.workflow != updated.workflow or
       environment(previous) != environment(updated) or
       not covers_repositories?(updated.repositories, previous.repositories) or
-      reaches_more_api?(previous.api_role, updated.api_role)
+      reaches_more_api?(previous.allowed_scopes, updated.allowed_scopes)
   end
 
   # A change is emailed when the workload identity trusts a workflow run,
@@ -471,7 +473,7 @@ defmodule Hexpm.WorkloadIdentities do
   # or naming an environment, is only audited.
   defp widens_trust?(previous, updated) do
     widens_runs?(previous, updated) or
-      reaches_more_api?(updated.api_role, previous.api_role) or
+      reaches_more_api?(updated.allowed_scopes, previous.allowed_scopes) or
       widens_coverage?(
         {previous.covers_private, previous.packages},
         {updated.covers_private, updated.packages}
@@ -489,12 +491,12 @@ defmodule Hexpm.WorkloadIdentities do
       widens_match?(environment(previous), environment(updated))
   end
 
-  defp reaches_more_api?(api_role, other),
-    do: api_role_level(api_role) > api_role_level(other)
-
-  defp api_role_level(nil), do: 0
-  defp api_role_level("read"), do: 1
-  defp api_role_level("write"), do: 2
+  defp reaches_more_api?(allowed_scopes, other),
+    do:
+      Enum.any?(
+        @api_scopes,
+        &(scope_allowed?(allowed_scopes, &1) and not scope_allowed?(other, &1))
+      )
 
   defp widens_match?("", _updated), do: false
   defp widens_match?(previous, updated), do: previous != updated
@@ -846,9 +848,10 @@ defmodule Hexpm.WorkloadIdentities do
   Without `:package`, the token is scoped to the organization repository named
   by `:repository`, and any of the organization's workload identities can match.
 
-  With `:api_role` and `:owner`, see `parse_resource/1`, the token is scoped
-  to the owner's API and any of its workload identities whose API access covers
-  `:api_role` can match, `write` covering `read`. The API checks the owner's
+  With `:api_scope` and `:owner`, see `parse_resource/1`, the token is scoped
+  to the owner's API and any of its workload identities whose allowed scopes
+  include `:api_scope`, or a scope covering it, can match, `api:write` covering
+  `api:read`. The API checks the owner's
   billing when the token is used, as it does for the owner's API keys.
   """
   def mint(%VerifiedToken{provider: provider, claims: claims}, opts) do
@@ -856,7 +859,7 @@ defmodule Hexpm.WorkloadIdentities do
          :ok <- check_unused(claims),
          {:ok, workload_identity, scope} <- find_identity(provider, claims, opts),
          {:ok, token} <-
-           mint_token(workload_identity, scope, claims, provider, opts[:api_role]) do
+           mint_token(workload_identity, scope, claims, provider, opts[:api_scope]) do
       :telemetry.execute([:hexpm, :workload_identity, :mint, :success], %{count: 1}, %{
         provider: provider.name(),
         package_id: workload_identity.package_id,
@@ -872,14 +875,14 @@ defmodule Hexpm.WorkloadIdentities do
     do: provider.rate_limit_key(claims)
 
   @doc """
-  Whether the workload identity's API access still covers the API scope of a token
-  it minted.
+  Whether the workload identity's allowed scopes still cover the API scope of a
+  token it minted.
   """
-  def api_role_covers?(%WorkloadIdentity{api_role: granted}, scopes) when is_list(scopes) do
-    cond do
-      "api:write" in scopes -> covers_api?(granted, "write")
-      "api:read" in scopes -> covers_api?(granted, "read")
-      true -> false
+  def allowed_scopes_cover?(%WorkloadIdentity{allowed_scopes: allowed}, scopes)
+      when is_list(scopes) do
+    case Enum.filter(scopes, &(&1 in @api_scopes)) do
+      [] -> false
+      api_scopes -> Enum.all?(api_scopes, &scope_allowed?(allowed, &1))
     end
   end
 
@@ -966,9 +969,9 @@ defmodule Hexpm.WorkloadIdentities do
   end
 
   defp find_identity(provider, claims, opts) do
-    case Keyword.fetch(opts, :api_role) do
-      {:ok, api_role} ->
-        find_api_identity(Keyword.fetch!(opts, :owner), api_role, provider, claims)
+    case Keyword.fetch(opts, :api_scope) do
+      {:ok, api_scope} ->
+        find_api_identity(Keyword.fetch!(opts, :owner), api_scope, provider, claims)
 
       :error ->
         with {:ok, repository} <- fetch_repository(opts),
@@ -989,18 +992,18 @@ defmodule Hexpm.WorkloadIdentities do
 
   # An owner that doesn't exist or doesn't have workload identities enabled
   # answers like one with no matching identity.
-  defp find_api_identity(owner, api_role, provider, claims) do
+  defp find_api_identity(owner, api_scope, provider, claims) do
     with {:ok, organization} <- fetch_owner(owner),
          true <- enabled?(organization) || {:error, :no_matching_identity} do
       workload_identities =
         organization
-        |> api_identities_query(api_role)
+        |> api_identities_query(api_scope)
         |> for_provider(provider)
         |> Repo.all()
         |> Enum.map(&%{&1 | organization: organization})
 
       with {:ok, workload_identity} <- find_match(workload_identities, provider, claims) do
-        {:ok, workload_identity, "api:#{api_role}"}
+        {:ok, workload_identity, api_scope}
       end
     end
   end
@@ -1012,18 +1015,22 @@ defmodule Hexpm.WorkloadIdentities do
     end
   end
 
-  defp api_identities_query(%Organization{id: organization_id}, api_role) do
+  defp api_identities_query(%Organization{id: organization_id}, api_scope) do
     from(wi in WorkloadIdentity,
-      where: wi.organization_id == ^organization_id and wi.api_role in ^covering(api_role),
+      where:
+        wi.organization_id == ^organization_id and
+          fragment("? && ?", wi.allowed_scopes, ^scopes_covering(api_scope)),
       order_by: [asc: wi.id]
     )
   end
 
-  defp covering("read"), do: ~w(read write)
-  defp covering("write"), do: ~w(write)
+  defp scopes_covering(scope), do: Enum.filter(@api_scopes, &(scope in covered_scopes(&1)))
 
-  defp covers_api?(nil, _api_role), do: false
-  defp covers_api?(granted, api_role), do: granted in covering(api_role)
+  defp covered_scopes("api:" <> resource),
+    do: Permissions.permission_to_scopes(%{domain: "api", resource: resource})
+
+  defp scope_allowed?(allowed_scopes, scope),
+    do: Enum.any?(scopes_covering(scope), &(&1 in allowed_scopes))
 
   defp find_package_identity(repository, package_name, provider, claims) do
     package = Packages.get(repository, package_name)
@@ -1184,7 +1191,7 @@ defmodule Hexpm.WorkloadIdentities do
       else: {:error, :billing_inactive}
   end
 
-  defp mint_token(workload_identity, scope, claims, provider, api_role) do
+  defp mint_token(workload_identity, scope, claims, provider, api_scope) do
     expires_in = @mint_expires_in
     expires_at = DateTime.add(DateTime.utc_now(), expires_in, :second)
     jti_oidc = claims["jti"]
@@ -1209,7 +1216,7 @@ defmodule Hexpm.WorkloadIdentities do
       }
 
       Repo.transaction(fn ->
-        with :ok <- lock_still_matching(workload_identity, provider, claims, api_role),
+        with :ok <- lock_still_matching(workload_identity, provider, claims, api_scope),
              {:ok, token} <- Repo.insert(Token.build(attrs)) do
           token
         else
@@ -1238,19 +1245,21 @@ defmodule Hexpm.WorkloadIdentities do
   # under a shared lock means a token is either inserted before a change, which
   # then revokes it, or refused when the change stopped trusting its workflow.
   # The packages it covers are checked when the token is used.
-  defp lock_still_matching(workload_identity, provider, claims, api_role) do
+  defp lock_still_matching(workload_identity, provider, claims, api_scope) do
     current =
       Repo.one(
         from(wi in WorkloadIdentity, where: wi.id == ^workload_identity.id, lock: "FOR SHARE")
       )
 
-    if current && provider.match?(current, claims) && still_covers_api?(current, api_role),
+    if current && provider.match?(current, claims) && still_covers_api?(current, api_scope),
       do: :ok,
       else: {:error, :no_matching_identity}
   end
 
   defp still_covers_api?(_current, nil), do: true
-  defp still_covers_api?(current, api_role), do: covers_api?(current.api_role, api_role)
+
+  defp still_covers_api?(current, api_scope),
+    do: scope_allowed?(current.allowed_scopes, api_scope)
 
   defp unique_grant_reference_error?(changeset) do
     Enum.any?(changeset.errors, fn

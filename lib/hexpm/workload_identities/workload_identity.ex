@@ -5,7 +5,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
 
   @providers ~w(github)
   @roles ~w(read write)
-  @api_roles ~w(read write)
+  @api_scopes ~w(api:read api:write)
   @github_issuer "https://token.actions.githubusercontent.com"
   @repo_name_re ~r/\A[A-Za-z0-9._-]+\z/
   @repository_id_re ~r/\A[1-9][0-9]{0,18}\z/
@@ -21,7 +21,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     field :workflow, :string
     field :environment, :string, default: ""
     field :role, :string, default: "write"
-    field :api_role, :string
+    field :allowed_scopes, {:array, :string}, default: []
     field :covers_private, :boolean, default: true
     field :packages, {:array, :string}
     field :covers_public, :boolean, default: false
@@ -38,8 +38,6 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
   def github_issuer, do: @github_issuer
 
   def roles, do: @roles
-
-  def api_roles, do: @api_roles
 
   def max_repositories, do: @max_repositories
 
@@ -67,7 +65,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     workload_identity
     |> cast(
       params,
-      ~w(provider repository_owner workflow environment role api_role
+      ~w(provider repository_owner workflow environment role allowed_scopes
          covers_private packages covers_public public_packages)a
     )
     |> put_assoc(:organization, organization)
@@ -97,7 +95,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     workload_identity
     |> cast(
       params,
-      ~w(workflow environment api_role covers_private packages covers_public public_packages)a
+      ~w(workflow environment allowed_scopes covers_private packages covers_public public_packages)a
     )
     |> validate_organization_identity(params, organization)
   end
@@ -117,7 +115,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     |> validate_identity()
     |> cast_repositories(params)
     |> validate_organization_match()
-    |> validate_api_role()
+    |> validate_allowed_scopes()
     |> validate_coverage()
     |> validate_billing(organization)
   end
@@ -125,16 +123,27 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
   # API access reaches as far as an organization admin key, so the GitHub
   # environment's protection rules are the only check before a job gets it,
   # whatever the visibility of the repositories.
-  defp validate_api_role(changeset) do
-    if get_field(changeset, :api_role) do
-      fields = Enum.reject([:workflow, :environment], &Keyword.has_key?(changeset.errors, &1))
+  defp validate_allowed_scopes(changeset) do
+    scopes = get_field(changeset, :allowed_scopes) || []
 
-      changeset
-      |> validate_inclusion(:api_role, @api_roles)
-      |> validate_required(fields, message: "is required for API access")
-      |> validate_some_repositories("are required for API access")
-    else
-      changeset
+    case Enum.reject(scopes, &(&1 in @api_scopes)) do
+      [] when scopes == [] ->
+        put_change(changeset, :allowed_scopes, [])
+
+      [] ->
+        fields = Enum.reject([:workflow, :environment], &Keyword.has_key?(changeset.errors, &1))
+
+        changeset
+        |> put_change(:allowed_scopes, scopes |> Enum.uniq() |> Enum.sort())
+        |> validate_required(fields, message: "is required for API access")
+        |> validate_some_repositories("are required for API access")
+
+      invalid_scopes ->
+        add_error(
+          changeset,
+          :allowed_scopes,
+          "contains invalid scopes: #{Enum.join(invalid_scopes, ", ")}"
+        )
     end
   end
 
@@ -143,7 +152,13 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     |> Map.new(fn {key, value} -> {to_string(key), value} end)
     |> split_names("packages")
     |> split_names("public_packages")
+    |> drop_blank_scopes()
   end
+
+  defp drop_blank_scopes(%{"allowed_scopes" => scopes} = params) when is_list(scopes),
+    do: %{params | "allowed_scopes" => Enum.reject(scopes, &(&1 in ["", nil]))}
+
+  defp drop_blank_scopes(params), do: params
 
   defp validate_identity(changeset) do
     changeset

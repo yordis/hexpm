@@ -41,7 +41,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
     identity =
       insert(:organization_workload_identity,
         organization: organization,
-        api_role: "write",
+        allowed_scopes: ["api:write"],
         workflow: "release.yml",
         environment: "release",
         repositories: [%TrustedRepository{name: "acme/widget", id: "67890"}]
@@ -63,7 +63,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
     }
   end
 
-  defp token_for(organization, api_role) do
+  defp token_for(organization, api_scope) do
     WorkloadIdentityHelpers.stub_oidc_discovery()
 
     {:ok, token} =
@@ -71,7 +71,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
       |> WorkloadIdentityHelpers.github_claims()
       |> WorkloadIdentityHelpers.sign_oidc_claims()
       |> WorkloadIdentities.verify_and_mint(
-        api_role: api_role,
+        api_scope: api_scope,
         owner: {:organization, organization.name}
       )
 
@@ -154,13 +154,13 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
 
       test "a write workload identity token", ctx do
         r = route(ctx, unquote(label))
-        conn = request(token_for(ctx.organization, "write"), r.method, r.path, r.body)
+        conn = request(token_for(ctx.organization, "api:write"), r.method, r.path, r.body)
         assert conn.status == r.status
       end
 
       test "a read workload identity token", ctx do
         r = route(ctx, unquote(label))
-        conn = request(token_for(ctx.organization, "read"), r.method, r.path, r.body)
+        conn = request(token_for(ctx.organization, "api:read"), r.method, r.path, r.body)
 
         if r.access == :read do
           assert conn.status == r.status
@@ -176,14 +176,14 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
 
         insert(:organization_workload_identity,
           organization: other,
-          api_role: "write",
+          allowed_scopes: ["api:write"],
           workflow: "release.yml",
           environment: "release",
           repositories: [%TrustedRepository{name: "acme/widget", id: "67890"}]
         )
 
         r = route(ctx, unquote(label))
-        conn = request(token_for(other, "write"), r.method, r.path, r.body)
+        conn = request(token_for(other, "api:write"), r.method, r.path, r.body)
 
         if r.path == "/api/repos" do
           assert conn.status == 200
@@ -232,7 +232,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
         ] do
       test "#{label} is logged with the workload identity as the actor", ctx do
         r = route(ctx, unquote(label))
-        conn = request(token_for(ctx.organization, "write"), r.method, r.path, r.body)
+        conn = request(token_for(ctx.organization, "api:write"), r.method, r.path, r.body)
         assert conn.status == r.status
 
         logs = Hexpm.Repo.all(from(al in Hexpm.Accounts.AuditLog, order_by: al.id))
@@ -252,7 +252,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
   describe "credentials" do
     test "an API token cannot be exchanged for another token as an API key", ctx do
       client = insert(:oauth_client, allowed_grant_types: ["client_credentials"])
-      "Bearer " <> access_token = token_for(ctx.organization, "write")
+      "Bearer " <> access_token = token_for(ctx.organization, "api:write")
 
       conn =
         post(build_conn(), "/api/oauth/token", %{
@@ -268,26 +268,26 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
     test "an API token does not authenticate a browser route", ctx do
       conn =
         build_conn()
-        |> put_req_header("authorization", token_for(ctx.organization, "write"))
+        |> put_req_header("authorization", token_for(ctx.organization, "api:write"))
         |> get("/dashboard")
 
       assert redirected_to(conn) =~ "/login"
     end
 
     test "the token is the organization on the auth endpoint", ctx do
-      conn = request(token_for(ctx.organization, "read"), :get, "/api/auth?domain=api")
+      conn = request(token_for(ctx.organization, "api:read"), :get, "/api/auth?domain=api")
       assert conn.status == 204
     end
 
     test "the token cannot be used for the repository domain", ctx do
       conn =
-        request(token_for(ctx.organization, "write"), :get, "/api/auth?domain=repository")
+        request(token_for(ctx.organization, "api:write"), :get, "/api/auth?domain=repository")
 
       assert conn.status in [401, 403]
     end
 
     test "a revoked token is refused", ctx do
-      authorization = token_for(ctx.organization, "write")
+      authorization = token_for(ctx.organization, "api:write")
 
       Hexpm.Repo.update_all(Hexpm.OAuth.Token, set: [revoked_at: DateTime.utc_now()])
 
@@ -295,11 +295,11 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
     end
 
     test "narrowing api access revokes the token", ctx do
-      authorization = token_for(ctx.organization, "write")
+      authorization = token_for(ctx.organization, "api:write")
       assert request(authorization, :get, "/api/orgs/#{ctx.organization.name}").status == 200
 
       ctx.identity
-      |> Ecto.Changeset.change(api_role: nil)
+      |> Ecto.Changeset.change(allowed_scopes: [])
       |> Hexpm.Repo.update!()
 
       assert request(authorization, :get, "/api/orgs/#{ctx.organization.name}").status == 401
@@ -319,7 +319,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
       r = route(ctx, "releases delete")
 
       key_conn = request(key_for(ctx.organization), r.method, r.path)
-      wi_conn = request(token_for(ctx.organization, "write"), r.method, r.path)
+      wi_conn = request(token_for(ctx.organization, "api:write"), r.method, r.path)
 
       assert key_conn.status == 403
       assert wi_conn.status == key_conn.status
@@ -327,7 +327,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
 
     test "reads keep working", ctx do
       r = route(ctx, "releases show")
-      assert request(token_for(ctx.organization, "write"), r.method, r.path).status == 200
+      assert request(token_for(ctx.organization, "api:write"), r.method, r.path).status == 200
     end
   end
 
@@ -345,7 +345,7 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
       assert publish.(key_for(ctx.organization)).status == 201
       Hexpm.Repo.delete_all(Hexpm.Repository.Release)
 
-      conn = publish.(token_for(ctx.organization, "write"))
+      conn = publish.(token_for(ctx.organization, "api:write"))
       assert conn.status == 201, conn.resp_body
     end
   end

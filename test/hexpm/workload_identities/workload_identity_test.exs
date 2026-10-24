@@ -204,7 +204,13 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
     end
 
     test "casts API access", %{organization: organization} do
-      for {value, expected} <- [{"read", "read"}, {"write", "write"}, {"", nil}] do
+      for {value, expected} <- [
+            {["api:read"], ["api:read"]},
+            {["api:write"], ["api:write"]},
+            {[""], []},
+            {[], []},
+            {["api:write", "api:read", "api:write"], ["api:read", "api:write"]}
+          ] do
         changeset =
           WorkloadIdentity.changeset(
             %WorkloadIdentity{},
@@ -212,13 +218,13 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
               "role" => "write",
               "workflow" => "release.yml",
               "environment" => "release",
-              "api_role" => value
+              "allowed_scopes" => value
             }),
             organization
           )
 
         assert changeset.valid?
-        assert Ecto.Changeset.get_field(changeset, :api_role) == expected
+        assert Ecto.Changeset.get_field(changeset, :allowed_scopes) == expected
       end
     end
 
@@ -230,12 +236,12 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
             "role" => "write",
             "workflow" => "release.yml",
             "environment" => "release",
-            "api_role" => "admin"
+            "allowed_scopes" => ["api:read", "admin"]
           }),
           organization
         )
 
-      assert errors_on(changeset).api_role
+      assert errors_on(changeset).allowed_scopes == "contains invalid scopes: admin"
     end
 
     test "requires a workflow and an environment for API access", %{organization: organization} do
@@ -243,7 +249,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
         changeset =
           WorkloadIdentity.changeset(
             %WorkloadIdentity{},
-            organization_params(%{"role" => role, "api_role" => "read"}),
+            organization_params(%{"role" => role, "allowed_scopes" => ["api:read"]}),
             organization
           )
 
@@ -254,7 +260,11 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
       changeset =
         WorkloadIdentity.changeset(
           %WorkloadIdentity{},
-          organization_params(%{"role" => "read", "api_role" => "read", "environment" => "x"}),
+          organization_params(%{
+            "role" => "read",
+            "allowed_scopes" => ["api:read"],
+            "environment" => "x"
+          }),
           organization
         )
 
@@ -268,7 +278,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
           organization_params(%{
             "role" => "read",
             "repositories" => "",
-            "api_role" => "write"
+            "allowed_scopes" => ["api:write"]
           }),
           organization
         )
@@ -1252,17 +1262,17 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentityTest do
             [workflow: "ci.yml", environment: ""],
             [workflow: "", environment: "", repositories: []]
           ] do
-        assert_raise Ecto.ConstraintError, ~r/workload_identities_api_role/, fn ->
-          insert(:organization_workload_identity, [api_role: "read"] ++ attrs)
+        assert_raise Ecto.ConstraintError, ~r/workload_identities_allowed_scopes/, fn ->
+          insert(:organization_workload_identity, [allowed_scopes: ["api:read"]] ++ attrs)
         end
       end
     end
 
     test "refuse API access on a package workload identity", %{package: package} do
-      assert_raise Ecto.ConstraintError, ~r/workload_identities_api_role/, fn ->
+      assert_raise Ecto.ConstraintError, ~r/workload_identities_allowed_scopes/, fn ->
         insert(:workload_identity,
           package: package,
-          api_role: "read",
+          allowed_scopes: ["api:read"],
           workflow: "ci.yml",
           environment: "release"
         )

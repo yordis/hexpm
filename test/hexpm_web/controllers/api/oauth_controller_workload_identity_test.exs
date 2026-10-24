@@ -566,7 +566,7 @@ defmodule HexpmWeb.API.OAuthControllerWorkloadIdentityTest do
       identity =
         insert(:organization_workload_identity,
           organization: organization,
-          api_role: "write",
+          allowed_scopes: ["api:write"],
           workflow: "release.yml",
           environment: "release",
           repositories: [
@@ -612,7 +612,7 @@ defmodule HexpmWeb.API.OAuthControllerWorkloadIdentityTest do
     end
 
     test "a read identity is refused api:write", %{organization: organization, identity: identity} do
-      identity |> Ecto.Changeset.change(api_role: "read") |> Hexpm.Repo.update!()
+      identity |> Ecto.Changeset.change(allowed_scopes: ["api:read"]) |> Hexpm.Repo.update!()
 
       denied =
         api_oidc()
