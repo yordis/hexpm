@@ -9,7 +9,7 @@ ENV LANG=C.UTF-8
 # install build dependencies
 RUN apt update && \
     apt upgrade -y && \
-    apt install -y --no-install-recommends git build-essential ca-certificates && \
+    apt install -y --no-install-recommends git build-essential cmake curl ca-certificates && \
     apt clean -y && rm -rf /var/lib/apt/lists/*
 
 # prepare build dir
@@ -41,8 +41,22 @@ RUN <<EOF
 EOF
 # The esbuild and tailwind binaries go in _build at the versions config.exs
 # sets, so this layer is cached until one of them changes, and assets.deploy
-# doesn't download them on every build.
-RUN mix do esbuild.install --if-missing + tailwind.install --if-missing
+# doesn't download them on every build. OTP 29's httpc rejects the GitHub
+# release redirect tailwind.install follows with header_too_long, so curl
+# fetches the tailwind binary to the path the tailwind package expects.
+RUN <<EOF
+  set -e
+  mix esbuild.install --if-missing
+  ARCH=$(dpkg --print-architecture | sed 's/amd64/x64/')
+  mix run --no-compile --no-start -e 'IO.puts(Tailwind.configured_version()); IO.puts(Tailwind.bin_path())' > /tmp/tailwind
+  VERSION=$(sed -n 1p /tmp/tailwind)
+  BIN=$(sed -n 2p /tmp/tailwind)
+  if [ ! -f "$BIN" ]; then
+    curl -fsSL -o "$BIN" "https://github.com/tailwindlabs/tailwindcss/releases/download/v$VERSION/tailwindcss-linux-$ARCH"
+    chmod +x "$BIN"
+  fi
+  rm /tmp/tailwind
+EOF
 
 # build project and assets
 COPY priv priv
