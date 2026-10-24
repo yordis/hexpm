@@ -79,7 +79,16 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
   end
 
   defp request(authorization, method, path, params \\ nil) do
-    conn = put_req_header(build_conn(), "authorization", authorization)
+    request(build_conn(), authorization, method, path, params)
+  end
+
+  # Refused credentials from 127.0.0.1 share one throttle with every other
+  # test, so a refusal comes from an address of its own.
+  defp refused_request(authorization, remote_ip, path),
+    do: request(%{build_conn() | remote_ip: remote_ip}, authorization, :get, path, nil)
+
+  defp request(conn, authorization, method, path, params) do
+    conn = put_req_header(conn, "authorization", authorization)
     Phoenix.ConnTest.dispatch(conn, HexpmWeb.Endpoint, method, path, params)
   end
 
@@ -291,7 +300,10 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
 
       Hexpm.Repo.update_all(Hexpm.OAuth.Token, set: [revoked_at: DateTime.utc_now()])
 
-      assert request(authorization, :get, "/api/orgs/#{ctx.organization.name}").status == 401
+      conn =
+        refused_request(authorization, {198, 51, 100, 71}, "/api/orgs/#{ctx.organization.name}")
+
+      assert conn.status == 401
     end
 
     test "narrowing api access revokes the token", ctx do
@@ -302,7 +314,10 @@ defmodule HexpmWeb.API.WorkloadIdentityApiAccessTest do
       |> Ecto.Changeset.change(allowed_scopes: [])
       |> Hexpm.Repo.update!()
 
-      assert request(authorization, :get, "/api/orgs/#{ctx.organization.name}").status == 401
+      conn =
+        refused_request(authorization, {198, 51, 100, 72}, "/api/orgs/#{ctx.organization.name}")
+
+      assert conn.status == 401
     end
   end
 
