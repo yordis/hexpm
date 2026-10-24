@@ -357,6 +357,67 @@ defmodule HexpmWeb.Dashboard.OrganizationWorkloadIdentitiesTest do
       assert Repo.get_by(AuditLog, action: "organization.workload_identity.add")
     end
 
+    test "adds a workload identity with API access", %{admin: admin, organization: organization} do
+      expect(Hexpm.HTTP.Mock, :get, fn "https://api.github.com/repos/acme/widget", _, _ ->
+        {:ok, 200, [], %{"id" => 22, "owner" => %{"id" => 11}}}
+      end)
+
+      conn =
+        build_conn()
+        |> test_login(admin)
+        |> post(
+          path(organization),
+          identity_params(%{
+            "role" => "read",
+            "workflow" => "terraform.yml",
+            "environment" => "production",
+            "allowed_scopes" => ["api:write"]
+          })
+        )
+
+      assert redirected_to(conn) == path(organization)
+      assert [identity] = WorkloadIdentities.list(organization)
+      assert identity.allowed_scopes == ["api:write"]
+
+      body =
+        build_conn()
+        |> test_login(admin)
+        |> get(path(organization))
+        |> html_response(200)
+
+      assert body =~ "Change the settings, members, keys and packages of #{organization.name}"
+    end
+
+    test "refuses API access without an environment and keeps the choice", %{
+      admin: admin,
+      organization: organization
+    } do
+      stub(Hexpm.HTTP.Mock, :get, fn "https://api.github.com/repos/acme/widget", _, _ ->
+        {:ok, 200, [], %{"id" => 22, "owner" => %{"id" => 11}}}
+      end)
+
+      conn =
+        build_conn()
+        |> test_login(admin)
+        |> post(
+          path(organization),
+          identity_params(%{
+            "role" => "read",
+            "workflow" => "terraform.yml",
+            "allowed_scopes" => ["api:read"]
+          })
+        )
+
+      document = conn |> html_response(400) |> LazyHTML.from_document()
+      assert normalized_text(document) =~ "is required for API access"
+
+      assert document
+             |> LazyHTML.query("#workload-identity-api-access-read[checked]")
+             |> Enum.count() == 1
+
+      assert WorkloadIdentities.list(organization) == []
+    end
+
     test "adds a workload identity for every repository of the owner", %{
       admin: admin,
       organization: organization
@@ -1031,6 +1092,32 @@ defmodule HexpmWeb.Dashboard.OrganizationWorkloadIdentitiesTest do
              ]
 
       assert Repo.get_by(AuditLog, action: "organization.workload_identity.update")
+    end
+
+    test "changes API access", %{admin: admin, organization: organization, identity: identity} do
+      stub_github(%{"widget" => 22})
+
+      conn =
+        build_conn()
+        |> test_login(admin)
+        |> put(
+          "#{path(organization)}/#{identity.id}",
+          change_params(%{"environment" => "production", "allowed_scopes" => ["api:read"]})
+        )
+
+      assert redirected_to(conn) == path(organization)
+      assert Repo.get!(WorkloadIdentity, identity.id).allowed_scopes == ["api:read"]
+
+      conn =
+        build_conn()
+        |> test_login(admin)
+        |> put(
+          "#{path(organization)}/#{identity.id}",
+          change_params(%{"environment" => "production", "allowed_scopes" => [""]})
+        )
+
+      assert redirected_to(conn) == path(organization)
+      assert Repo.get!(WorkloadIdentity, identity.id).allowed_scopes == []
     end
 
     test "re-renders the change form with errors", %{

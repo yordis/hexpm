@@ -347,5 +347,16 @@ defmodule Hexpm.Repository.Owners do
       Packages.owner_with_access?(package, organization.user, "full")
   end
 
+  defp full_owner_actor?(
+         package,
+         %WorkloadIdentity{organization_id: organization_id, allowed_scopes: allowed_scopes}
+       )
+       when not is_nil(organization_id) and allowed_scopes != [] do
+    case Repo.get(Organization, organization_id) do
+      nil -> false
+      organization -> full_owner_actor?(package, organization)
+    end
+  end
+
   defp full_owner_actor?(_package, _actor), do: false
 end

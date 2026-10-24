@@ -270,8 +270,23 @@ defmodule HexpmWeb.EmailView do
     end
 
     def warning(role, organization, coverage) do
-      "Anyone who can run a matching workflow can now #{reach(role, organization, coverage)}. " <>
+      "Anyone who can run a matching workflow can now " <>
+        "#{reach(role, organization, coverage)}#{api_reach(organization, coverage)}. " <>
         "If you did not expect this change, remove the workload identity and review the organization's admins."
+    end
+
+    defp api_reach(organization, %{allowed_scopes: scopes}) do
+      cond do
+        "api:write" in scopes ->
+          ", and change the settings, members, keys and packages of #{organization} " <>
+            "through the API, with the access of an organization admin key"
+
+        "api:read" in scopes ->
+          ", and read the settings, members, keys and packages of #{organization} through the API"
+
+        true ->
+          ""
+      end
     end
 
     defp reach("read", organization, _coverage),
@@ -324,8 +339,14 @@ defmodule HexpmWeb.EmailView do
         "Workflow: #{if workflows.workflow in [nil, ""], do: "any", else: workflows.workflow}"
       ] ++
         WorkloadIdentityDetails.environment_line(workflows.environment) ++
+        allowed_scopes_line(coverage) ++
         coverage_lines(role, organization, coverage)
     end
+
+    defp allowed_scopes_line(%{allowed_scopes: [_ | _] = scopes}),
+      do: ["API access: #{Enum.join(scopes, ", ")}"]
+
+    defp allowed_scopes_line(_coverage), do: []
 
     defp repositories_line(%{repositories: [], repository_owner: owner}),
       do: "GitHub repositories: any repository owned by #{owner}"

@@ -206,6 +206,9 @@ config :ueberauth, Ueberauth,
     github: {Ueberauth.Strategy.Github, [default_scope: "user:email"]}
   ]
 
-config :mdex_native, syntax_highlighter: :lumis
+# OTP 29's httpc rejects the GitHub release redirect for precompiled NIFs
+# with header_too_long, so they're fetched from the Cloudflare mirrors.
+config :lumis, artifact_source: :cloudflare
+config :mdex_native, syntax_highlighter: :lumis, artifact_source: :cloudflare
 
 import_config "#{Mix.env()}.exs"

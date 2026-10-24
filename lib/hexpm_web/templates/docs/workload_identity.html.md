@@ -61,7 +61,7 @@ A package can have several workload identities, for example for several workflow
 
 ### Organization workload identities
 
-An organization admin configures workload identities for the organization's private repository, and for the public packages the organization owns, on the "Workload identities" page of the organization dashboard. Every member can see the page. Adding one requires the admin role and two-factor authentication on the admin's account, and changing or removing one has the same requirements. The `read` role and private packages also need an active billing subscription. A `write` workload identity that only covers public packages doesn't, the same as an organization API key publishing public packages, so the page stays usable without one and offers only public packages. Hex emails every organization admin when one is added or removed, or changed to trust more, and records every change in the organization's activity log. A package's own "Workload identities" tab lists the organization workload identities that can publish it and links to the organization page.
+An organization admin configures workload identities for the organization's private repository, and for the public packages the organization owns, on the "Workload identities" page of the organization dashboard. Every member can see the page. Adding one requires the admin role and two-factor authentication on the admin's account, and changing or removing one has the same requirements. The `read` role and private packages also need an active billing subscription. A `write` workload identity that only covers public packages doesn't, the same as an organization API key publishing public packages, so the page stays usable without one and offers only public packages. Hex emails every organization admin when one is added or removed, or changed to trust more, including more API access, and records every change in the organization's activity log. A package's own "Workload identities" tab lists the organization workload identities that can publish it and links to the organization page.
 
 Each organization workload identity has a role:
 
@@ -96,7 +96,9 @@ A public package is published by its own package workload identities and by the 
 
 Adding or removing a workload identity with public packages also emails the other owners of the public packages it covers, one email per person naming their packages, the same as adding a package workload identity emails every package owner. A change emails the owners of the public packages it starts publishing, and of those it keeps publishing when it trusts a repository, workflow or environment it didn't.
 
-Neither role can retire releases, revert, or change owners, keys, members, or settings. The organization's single sign-on and two-factor authentication requirements don't apply to organization workload identities, the same as for organization API keys.
+An organization workload identity can also have API access, `read` or `write`, which is none by default. It is meant for tools such as a Terraform provider that manage the organization's settings, members, keys and packages through the API without a stored API key, and it reaches as far as an organization admin API key of the same access. So it needs at least one repository, a workflow and an environment, also when the repositories are public, and the environment's protection rules are the only check GitHub runs before a job gets it. API access is independent of the role. [Exchange the OIDC token for an API token](#api-access-for-an-organization) to use it. Changing a workload identity to more API access is emailed like any change that trusts more, and changing it to less access or none revokes the tokens the workload identity issued.
+
+Without API access, neither role can retire releases, revert, or change owners, keys, members, or settings. The organization's single sign-on and two-factor authentication requirements don't apply to organization workload identities, the same as for organization API keys.
 
 To fetch, exchange the OIDC token for a repository token by setting the scope to the organization's repository:
 
@@ -211,7 +213,7 @@ assertion=<github-oidc-jwt>&
 scope=package:hexpm/PACKAGE
 ```
 
-No `client_id` is needed, because the OIDC token is the credential. `scope` names exactly one package as `package:REPOSITORY/PACKAGE`. An [organization workload identity](#organization-workload-identities) uses its organization's repository (`package:ORG/PACKAGE`) for a private package and `package:hexpm/PACKAGE` for a public one, or requests `repository:ORG` to fetch. Successful response:
+No `client_id` is needed, because the OIDC token is the credential. `scope` names exactly one package as `package:REPOSITORY/PACKAGE`, unless it asks for API access, described below. An [organization workload identity](#organization-workload-identities) uses its organization's repository (`package:ORG/PACKAGE`) for a private package and `package:hexpm/PACKAGE` for a public one, or requests `repository:ORG` to fetch. Successful response:
 
 ```nohighlight
 {
@@ -222,7 +224,32 @@ No `client_id` is needed, because the OIDC token is the credential. `scope` name
 }
 ```
 
-Errors use OAuth-style bodies (`error`, `error_description`), for example missing fields (`invalid_request`), a malformed or missing `scope` (`invalid_scope`), bad or replayed OIDC tokens (`invalid_grant`), or no matching workload identity (`access_denied`). An unknown package, repository, or organization returns the same `access_denied` as no matching workload identity. A matching workload identity of an organization without an active billing state also gets `access_denied` for the organization's repository, with a description saying so.
+Errors use OAuth-style bodies (`error`, `error_description`), for example missing fields (`invalid_request`), a malformed or missing `scope` (`invalid_scope`), a missing, malformed or unsupported `resource` (`invalid_target`), bad or replayed OIDC tokens (`invalid_grant`), or no matching workload identity (`access_denied`). An unknown package, repository, or organization returns the same `access_denied` as no matching workload identity, and so does an organization without workload identities. A matching workload identity of an organization without an active billing state also gets `access_denied` for the organization's repository, with a description saying so.
+
+#### API access for an organization
+
+An organization workload identity with [API access](#organization-workload-identities) exchanges the OIDC token for a token that calls the JSON API as the organization. Request `api:read` or `api:write` as the `scope`, and name the organization with `resource` ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)) as `organization:NAME`:
+
+```nohighlight
+curl -s https://hex.pm/api/oauth/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
+  --data-urlencode assertion="$OIDC_TOKEN" \
+  -d scope=api:write \
+  -d resource=organization:ORG
+```
+
+```nohighlight
+{
+  "access_token": "<hex-access-token>",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "scope": "api:write"
+}
+```
+
+Then send it as `Authorization: Bearer <hex-access-token>`. Only workload identities of that organization whose API access covers the scope match, and `write` access also covers `api:read`. The usual matching applies: the repository, workflow, environment and the immutable IDs must match the token. A `resource` is required with an API scope and rejected with any other scope. A `resource` that isn't `organization:NAME` returns `invalid_target`, and `user:NAME` isn't supported yet. There is no refresh token, and the token expires after 15 minutes.
+
+The token acts as the organization, exactly like an organization API key with the same access. An `api:read` token reads what the organization can read, and an `api:write` token also changes organization settings, members, keys, owners, releases, retirements and documentation, and publishes packages. It is refused wherever an organization API key is refused, including inviting a member, which needs a user's credentials, and a release delete when the organization has no active billing subscription. It can't reach another organization or the dashboard, and it can't be used as an API key to obtain other tokens. The organization's activity log attributes each change to the workload identity. Changing the workload identity to less API access or none, or removing it, revokes its tokens.
 
 The grant is public, since the OIDC token is the credential. Exchanges are limited to 1,000 a minute per address, far above what CI runners sharing an address send, and beyond that the endpoint answers `429`. Exchanges that fail after the OIDC token is verified count toward a limit per GitHub repository. Once a repository exceeds it, the endpoint answers `429` with `slow_down` for that repository only. Tokens from rejected events and replayed tokens don't count, because a pull request from a fork can produce them.
 
@@ -240,7 +267,7 @@ token=<hex-access-token>
 * Hex verifies the GitHub OIDC signature with discovery and JWKS, rejects `none` and HMAC algorithms, and checks `iss`, `aud`, `exp`, `nbf`, and `iat`.
 * Matching requires one of the configured repositories, the workflow basename from a workflow ref inside that repository, the immutable `repository_owner_id` and `repository_id`, and the environment when one is configured. A token without a `repository_id` claim never matches. A workload identity that can publish and has no environment matches no token whose `repository_visibility` claim is `public`. The workflow is compared exactly, including casing. The repository, owner, and environment are compared case-insensitively, and the repository and owner are pinned by their immutable GitHub IDs. A reusable workflow from another repository doesn't satisfy the workflow match by having the same basename.
 * Pinning the repository ID as well as the owner ID matters inside an organization. If the configured repository is deleted, anyone who can create a repository in that organization could otherwise recreate the name, add the configured workflow, and get a token. The owner ID alone wouldn't stop that.
-* Hex tokens issued this way expire after 15 minutes, cover one package or one organization repository, and are attributed to the workload identity. The release has no publishing user, and the audit log records the publish.
+* Hex tokens issued this way expire after 15 minutes, cover one package, one organization repository or one organization's API, and are attributed to the workload identity. The release has no publishing user, and the audit log records the publish.
 * Hex rejects tokens from `pull_request_target` and `workflow_run` workflows. A `workflow_run` run gets write permissions even when a pull request from a fork triggered the run that started it, and no OIDC claim says whether one did.
 * Adding, changing or removing a package workload identity requires full package ownership and two-factor authentication, because a workload identity grants publish rights the same way a personal API key does. Hex emails every package owner when a workload identity is added or removed, or changed to trust more, and the email can't be turned off. Transferring the package removes its workload identities. An organization workload identity with public packages emails the owners of the public packages it covers in the same way. The CI exchange and publish don't require two-factor authentication, because the grant has no interactive user.
 * Hex records an allowlisted snapshot of the verified OIDC claims (repository, workflow ref, commit SHA, run id, and similar) on the Hex token and attaches it to the release published with that token. The release API exposes it as `oidc_claims`. The package page shows it in a Provenance card that links to the source commit, build file, branch or tag, environment, triggering actor, and workflow run, so anyone using the package can see that a release was published with Workload Identity and which workflow produced it.

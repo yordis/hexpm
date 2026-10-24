@@ -3,7 +3,7 @@ defmodule Hexpm.Accounts.Auth do
   import HexpmWeb.RequestHelpers, only: [parse_ip: 1, parse_user_agent: 1]
 
   alias Hexpm.Accounts.{Key, Keys, Organization, Organizations, User, Users, UserProviders}
-  alias Hexpm.OAuth.{Tokens, JWT}
+  alias Hexpm.OAuth.{Token, Tokens, JWT}
   alias Hexpm.WorkloadIdentities
   alias Hexpm.WorkloadIdentities.WorkloadIdentity
 
@@ -180,15 +180,48 @@ defmodule Hexpm.Accounts.Auth do
      }}
   end
 
-  defp build_auth_result(%WorkloadIdentity{} = workload_identity, oauth_token) do
-    {:ok,
-     %{
-       auth_credential: oauth_token,
-       user: nil,
-       organization: nil,
-       email: nil,
-       workload_identity: workload_identity
-     }}
+  # A token with an API scope acts as the workload identity's organization,
+  # like one of the organization's API keys, and keeps the workload identity
+  # for attribution. The others reach only what their scope names, as the
+  # workload identity.
+  defp build_auth_result(%WorkloadIdentity{} = workload_identity, %Token{} = oauth_token) do
+    if Token.api?(oauth_token) do
+      build_api_auth_result(workload_identity, oauth_token)
+    else
+      {:ok,
+       %{
+         auth_credential: oauth_token,
+         user: nil,
+         organization: nil,
+         email: nil,
+         workload_identity: workload_identity
+       }}
+    end
+  end
+
+  defp build_api_auth_result(%WorkloadIdentity{} = workload_identity, oauth_token) do
+    organization = api_organization(workload_identity)
+
+    if organization &&
+         WorkloadIdentities.allowed_scopes_cover?(workload_identity, oauth_token.scopes) do
+      {:ok,
+       %{
+         auth_credential: oauth_token,
+         user: nil,
+         organization: organization,
+         email: nil,
+         workload_identity: workload_identity
+       }}
+    else
+      {:error, :invalid}
+    end
+  end
+
+  defp api_organization(%WorkloadIdentity{organization_id: nil}), do: nil
+
+  defp api_organization(%WorkloadIdentity{organization_id: organization_id}) do
+    Hexpm.Repo.get(Organization, organization_id)
+    |> Hexpm.Repo.preload([:repository, user: [:emails, owned_packages: :repository]])
   end
 
   defp load_user_from_username(username) when is_binary(username) do

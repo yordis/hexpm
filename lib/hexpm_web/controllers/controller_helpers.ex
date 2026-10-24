@@ -360,8 +360,8 @@ defmodule HexpmWeb.ControllerHelpers do
 
   def audit_data(conn) do
     actor =
-      conn.assigns.current_user || conn.assigns.current_organization ||
-        Map.get(conn.assigns, :workload_identity)
+      Map.get(conn.assigns, :workload_identity) || conn.assigns.current_user ||
+        conn.assigns.current_organization
 
     %{
       user: actor,
