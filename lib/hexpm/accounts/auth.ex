@@ -203,7 +203,7 @@ defmodule Hexpm.Accounts.Auth do
     organization = api_organization(workload_identity)
 
     if organization &&
-         WorkloadIdentities.api_access_covers?(workload_identity, oauth_token.scopes) do
+         WorkloadIdentities.api_role_covers?(workload_identity, oauth_token.scopes) do
       {:ok,
        %{
          auth_credential: oauth_token,

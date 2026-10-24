@@ -106,8 +106,8 @@ defmodule HexpmWeb.Dashboard.Organization.Components.WorkloadIdentitiesTab do
               <dd>
                 <ul class="list-disc pl-4 text-grey-900 dark:text-grey-100">
                   <li :for={line <- capabilities(workload_identity, @organization)}>{line}</li>
-                  <li :if={workload_identity.api_access}>
-                    {api_access_capability(workload_identity.api_access, @organization)}
+                  <li :if={workload_identity.api_role}>
+                    {api_role_capability(workload_identity.api_role, @organization)}
                   </li>
                   <li :if={workload_identity.role == "write" and workload_identity.covers_public}>
                     Publish public packages:
@@ -291,20 +291,20 @@ defmodule HexpmWeb.Dashboard.Organization.Components.WorkloadIdentitiesTab do
                 API access
               </h3>
               <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <.api_access_option form={@form} value="" title="None">
+                <.api_role_option form={@form} value="" title="None">
                   Fetches and publishes packages only.
-                </.api_access_option>
-                <.api_access_option form={@form} value="read" title="Read">
+                </.api_role_option>
+                <.api_role_option form={@form} value="read" title="Read">
                   Reads the organization's settings, members, keys and packages through the API.
-                </.api_access_option>
-                <.api_access_option form={@form} value="write" title="Write">
+                </.api_role_option>
+                <.api_role_option form={@form} value="write" title="Write">
                   Also changes them, including creating keys, like an organization admin API key.
-                </.api_access_option>
+                </.api_role_option>
               </div>
               <p class="text-xs text-grey-500 dark:text-grey-300">
                 API access needs at least one repository, a workflow and an environment, also for public repositories. The environment's protection rules are the only check GitHub runs before a job gets this access.
               </p>
-              <.errors errors={field_errors(@form, :api_access)} />
+              <.errors errors={field_errors(@form, :api_role)} />
             </div>
 
             <p class="rounded-lg border border-dashed border-grey-200 dark:border-grey-700 px-4 py-3 text-sm text-grey-500 dark:text-grey-300 group-has-[#workload-identity-role-write:checked]/workload-identity:hidden">
@@ -489,15 +489,15 @@ defmodule HexpmWeb.Dashboard.Organization.Components.WorkloadIdentitiesTab do
   attr :title, :string, required: true
   slot :inner_block, required: true
 
-  defp api_access_option(assigns) do
+  defp api_role_option(assigns) do
     ~H"""
     <label class="flex items-start gap-3 rounded-lg border p-3 cursor-pointer border-grey-200 dark:border-grey-700 has-[:checked]:border-primary-500 has-[:checked]:ring-1 has-[:checked]:ring-primary-500">
       <input
         type="radio"
         id={"workload-identity-api-access-#{if @value == "", do: "none", else: @value}"}
-        name="workload_identity[api_access]"
+        name="workload_identity[api_role]"
         value={@value}
-        checked={to_string(@form[:api_access].value) == @value}
+        checked={to_string(@form[:api_role].value) == @value}
         class="mt-0.5 w-4 h-4 text-primary-600 border-grey-300 dark:border-grey-600 focus:ring-2 focus:ring-primary-500"
       />
       <span class="flex flex-col gap-0.5">
@@ -581,10 +581,10 @@ defmodule HexpmWeb.Dashboard.Organization.Components.WorkloadIdentitiesTab do
 
   defp capabilities(_workload_identity, _organization), do: []
 
-  defp api_access_capability(:read, organization),
+  defp api_role_capability("read", organization),
     do: "Read the settings, members, keys and packages of #{organization.name} through the API"
 
-  defp api_access_capability(:write, organization),
+  defp api_role_capability("write", organization),
     do: "Change the settings, members, keys and packages of #{organization.name} through the API"
 
   defp role_variant("write"), do: "purple"

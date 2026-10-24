@@ -4,7 +4,7 @@ defmodule Hexpm.Emails do
   alias HexpmWeb.EmailView.{Common, PackageSearchDisabled}
   alias Hexpm.Accounts.{Email, Organization, User}
 
-  @coverage_fields [:api_access, :covers_private, :packages, :covers_public, :public_packages]
+  @coverage_fields [:api_role, :covers_private, :packages, :covers_public, :public_packages]
 
   @doc """
   The types the builders tag their mail with. Each builder tags its mail with

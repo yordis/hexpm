@@ -349,9 +349,9 @@ defmodule Hexpm.Repository.Owners do
 
   defp full_owner_actor?(
          package,
-         %WorkloadIdentity{organization_id: organization_id, api_access: api_access}
+         %WorkloadIdentity{organization_id: organization_id, api_role: api_role}
        )
-       when not is_nil(organization_id) and not is_nil(api_access) do
+       when not is_nil(organization_id) and not is_nil(api_role) do
     case Repo.get(Organization, organization_id) do
       nil -> false
       organization -> full_owner_actor?(package, organization)

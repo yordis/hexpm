@@ -275,10 +275,10 @@ defmodule HexpmWeb.EmailView do
         "If you did not expect this change, remove the workload identity and review the organization's admins."
     end
 
-    defp api_reach(organization, %{api_access: :read}),
+    defp api_reach(organization, %{api_role: "read"}),
       do: ", and read the settings, members, keys and packages of #{organization} through the API"
 
-    defp api_reach(organization, %{api_access: :write}),
+    defp api_reach(organization, %{api_role: "write"}),
       do:
         ", and change the settings, members, keys and packages of #{organization} " <>
           "through the API, with the access of an organization admin key"
@@ -335,14 +335,14 @@ defmodule HexpmWeb.EmailView do
         "Workflow: #{if workflows.workflow in [nil, ""], do: "any", else: workflows.workflow}"
       ] ++
         WorkloadIdentityDetails.environment_line(workflows.environment) ++
-        api_access_line(coverage) ++
+        api_role_line(coverage) ++
         coverage_lines(role, organization, coverage)
     end
 
-    defp api_access_line(%{api_access: api_access}) when not is_nil(api_access),
-      do: ["API access: #{api_access}"]
+    defp api_role_line(%{api_role: api_role}) when not is_nil(api_role),
+      do: ["API access: #{api_role}"]
 
-    defp api_access_line(_coverage), do: []
+    defp api_role_line(_coverage), do: []
 
     defp repositories_line(%{repositories: [], repository_owner: owner}),
       do: "GitHub repositories: any repository owned by #{owner}"

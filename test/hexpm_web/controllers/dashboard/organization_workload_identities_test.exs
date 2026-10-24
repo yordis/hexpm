@@ -371,13 +371,13 @@ defmodule HexpmWeb.Dashboard.OrganizationWorkloadIdentitiesTest do
             "role" => "read",
             "workflow" => "terraform.yml",
             "environment" => "production",
-            "api_access" => "write"
+            "api_role" => "write"
           })
         )
 
       assert redirected_to(conn) == path(organization)
       assert [identity] = WorkloadIdentities.list(organization)
-      assert identity.api_access == :write
+      assert identity.api_role == "write"
 
       body =
         build_conn()
@@ -404,7 +404,7 @@ defmodule HexpmWeb.Dashboard.OrganizationWorkloadIdentitiesTest do
           identity_params(%{
             "role" => "read",
             "workflow" => "terraform.yml",
-            "api_access" => "read"
+            "api_role" => "read"
           })
         )
 
@@ -1102,22 +1102,22 @@ defmodule HexpmWeb.Dashboard.OrganizationWorkloadIdentitiesTest do
         |> test_login(admin)
         |> put(
           "#{path(organization)}/#{identity.id}",
-          change_params(%{"environment" => "production", "api_access" => "read"})
+          change_params(%{"environment" => "production", "api_role" => "read"})
         )
 
       assert redirected_to(conn) == path(organization)
-      assert Repo.get!(WorkloadIdentity, identity.id).api_access == :read
+      assert Repo.get!(WorkloadIdentity, identity.id).api_role == "read"
 
       conn =
         build_conn()
         |> test_login(admin)
         |> put(
           "#{path(organization)}/#{identity.id}",
-          change_params(%{"environment" => "production", "api_access" => ""})
+          change_params(%{"environment" => "production", "api_role" => ""})
         )
 
       assert redirected_to(conn) == path(organization)
-      assert Repo.get!(WorkloadIdentity, identity.id).api_access == nil
+      assert Repo.get!(WorkloadIdentity, identity.id).api_role == nil
     end
 
     test "re-renders the change form with errors", %{

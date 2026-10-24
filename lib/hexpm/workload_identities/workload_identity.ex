@@ -5,7 +5,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
 
   @providers ~w(github)
   @roles ~w(read write)
-  @api_accesses [:read, :write]
+  @api_roles ~w(read write)
   @github_issuer "https://token.actions.githubusercontent.com"
   @repo_name_re ~r/\A[A-Za-z0-9._-]+\z/
   @repository_id_re ~r/\A[1-9][0-9]{0,18}\z/
@@ -21,7 +21,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     field :workflow, :string
     field :environment, :string, default: ""
     field :role, :string, default: "write"
-    field :api_access, Ecto.Enum, values: @api_accesses
+    field :api_role, :string
     field :covers_private, :boolean, default: true
     field :packages, {:array, :string}
     field :covers_public, :boolean, default: false
@@ -39,7 +39,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
 
   def roles, do: @roles
 
-  def api_accesses, do: @api_accesses
+  def api_roles, do: @api_roles
 
   def max_repositories, do: @max_repositories
 
@@ -67,7 +67,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     workload_identity
     |> cast(
       params,
-      ~w(provider repository_owner workflow environment role api_access
+      ~w(provider repository_owner workflow environment role api_role
          covers_private packages covers_public public_packages)a
     )
     |> put_assoc(:organization, organization)
@@ -97,7 +97,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     workload_identity
     |> cast(
       params,
-      ~w(workflow environment api_access covers_private packages covers_public public_packages)a
+      ~w(workflow environment api_role covers_private packages covers_public public_packages)a
     )
     |> validate_organization_identity(params, organization)
   end
@@ -117,7 +117,7 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
     |> validate_identity()
     |> cast_repositories(params)
     |> validate_organization_match()
-    |> validate_api_access()
+    |> validate_api_role()
     |> validate_coverage()
     |> validate_billing(organization)
   end
@@ -125,11 +125,12 @@ defmodule Hexpm.WorkloadIdentities.WorkloadIdentity do
   # API access reaches as far as an organization admin key, so the GitHub
   # environment's protection rules are the only check before a job gets it,
   # whatever the visibility of the repositories.
-  defp validate_api_access(changeset) do
-    if get_field(changeset, :api_access) do
+  defp validate_api_role(changeset) do
+    if get_field(changeset, :api_role) do
       fields = Enum.reject([:workflow, :environment], &Keyword.has_key?(changeset.errors, &1))
 
       changeset
+      |> validate_inclusion(:api_role, @api_roles)
       |> validate_required(fields, message: "is required for API access")
       |> validate_some_repositories("are required for API access")
     else
